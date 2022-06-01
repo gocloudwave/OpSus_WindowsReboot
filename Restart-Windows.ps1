@@ -28,7 +28,7 @@ $LMCreds = $null
 $ScriptOutput = "$($Configuration.SavePath)\$(Get-Date -Format FileDateUniversal)-ScriptResults.csv"
 $ScriptErrors = "$($Configuration.SavePath)\$(Get-Date -Format FileDateUniversal)-ScriptErrors.log"
 $MinPowerCLI = $Settings.MinimumPowerCLIVersion
-$ADTssTemplateId = $SecretTemplateLookup.ActiveDirectoryAccount
+$ADTssTemplateId = $Settings.SecretTemplateLookup.ActiveDirectoryAccount
 $LMTssTemplateId = $Settings.SecretTemplateLookup.LocalUserWindowsAccount
 $TssUsername = "PARKPLACEINTL\$Env:USERNAME"
 # Create synchronized hashtable
