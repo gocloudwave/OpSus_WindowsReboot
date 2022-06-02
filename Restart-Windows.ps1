@@ -25,18 +25,15 @@ $VMNames = Import-Csv -Path "$PSScriptRoot\$($Settings.CSVFileName)"
 $MaxRunspaces = [Math]::Ceiling($VMNames.Count / 4)
 $ADCreds = $null
 $LMCreds = $null
-$ScriptOutput = "$($Configuration.SavePath)\$(Get-Date -Format FileDateUniversal)-ScriptResults.csv"
-$ScriptErrors = "$($Configuration.SavePath)\$(Get-Date -Format FileDateUniversal)-ScriptErrors.log"
+$ScriptOutput = "$PSScriptRoot\$(Get-Date -Format FileDateUniversal)-Services.csv"
+$ScriptErrors = "$PSScriptRoot\$(Get-Date -Format FileDateUniversal)-ScriptErrors.log"
 $MinPowerCLI = $Settings.MinimumPowerCLIVersion
 $ADTssTemplateId = $Settings.SecretTemplateLookup.ActiveDirectoryAccount
 $LMTssTemplateId = $Settings.SecretTemplateLookup.LocalUserWindowsAccount
 $TssUsername = "PARKPLACEINTL\$Env:USERNAME"
 # Create synchronized hashtable
 $Configuration = [hashtable]::Synchronized(@{})
-$Configuration.ScriptResults = @(
-    'VM',
-    'ServiceName'
-)
+$Configuration.Services = @()
 $Configuration.ScriptErrors = @()
 $Configuration.VIServer = $null
 
@@ -91,7 +88,7 @@ if (!(Get-Module -Name VMware.PowerCLI -ListAvailable) -or `
     (Get-WmiObject -Class Win32_Product -Filter "Name='VMware vSphere PowerCLI'") ) {
     # Call Install-PowerCLI.ps1
     Start-Process -FilePath 'Install-PowerCLI.ps1' -WorkingDirectory $PSScriptRoot -Verb RunAs
-} elseif ([version]( Get-Module -Name VMware.PowerCLI -ListAvailable ).Version -lt [version]$MinPowerCLI) {
+} elseif (( Get-Module -Name VMware.PowerCLI -ListAvailable ).Version -lt [version]$MinPowerCLI) {
     # Update PowerCLI if not at the minimum acceptable version
     try {
         Update-Module VMware.PowerCLI -Force
@@ -110,9 +107,10 @@ if (!(Get-Module -Name VMware.PowerCLI -ListAvailable) -or `
     } | Uninstall-Module -Verbose
 }
 
-.\Search-TssFolders.ps1
-.\Get-UserCredentials.ps1
-.\Get-VMToolsStatus.ps1
+. "$PSScriptRoot\Search-TssFolders.ps1"
+. "$PSScriptRoot\Get-UserCredentials.ps1"
+. "$PSScriptRoot\Get-VMToolsStatus.ps1"
+. "$PSScriptRoot\User-Prompts.ps1"
 
 # Use invalid certificate action from settings.json
 $null = Set-PowerCLIConfiguration -InvalidCertificateAction $Settings.InvalidCertAction -Scope Session `
@@ -128,7 +126,10 @@ $VMsTools = Get-VMToolsStatus -InputObject $VMs
 foreach ($VM in $VMsTools) {
     if ($VM.UpgradeStatus -ne 'guestToolsCurrent') {
         $Configuration.ScriptErrors += "WARNING: The version of VMware Tools on VM '$($VM.Name)' is " +
-        'out of date and may cause the script to work improperly. Script will stop VM instead of shutting down.'
+        'out of date and may cause the script to work improperly.'
+        if ($VM.Status -ne 'toolsOk') {
+            $Configuration.ScriptErrors += 'WARNING: VMware Tools NOT OK. Stopping VM instead of shutting down.'
+        }
     }
 }
 
@@ -170,11 +171,11 @@ if ($ButtonClicked -eq $Selection.Cancel) {
         $TssFolders = Search-TssFolders -TssSession $Session -TopLevelOnly $true
     }
 
-    if (($TssFolders.Count -eq 1) -or ($null -eq $TssFolders)) {
+    if (($TssFolders.Count -eq 1) -or ($null -eq $TssFolders.Count)) {
         $TssFolder = $TssFolders
     } else {
-        $TssFolderName = myDialogBox -Title 'Select a folder:' -Prompt 'Please select the Secret Folder:' `
-            -Values $TssFolders.FolderName
+        $Prompt = "Please select the Secret Folder (found $($TssFolders.Count)):"
+        $TssFolderName = myDialogBox -Title 'Select a folder:' -Prompt $Prompt -Values $TssFolders.FolderName
 
         if ($TssFolderName) {
             $TssFolder = $TssFolders | Where-Object { $_.FolderName -eq $TssFolderName }
@@ -201,24 +202,24 @@ if ($ButtonClicked -eq $Selection.Cancel) {
 
     # Select Local Admin secret
     if ($LMSecrets) {
-        $LMSecretName = myDialogBox -Title 'Select a secret' -Prompt 'Please select the Local Machine Admin ' + `
-            'Secret:' -Values $ADSecrets.SecretName
+        $Prompt = 'Please select the Local Machine Admin Secret:'
+        $LMSecretName = myDialogBox -Title 'Select a secret' -Prompt $Prompt -Values $LMSecrets.SecretName
     }
 
     # Obtain Domain Admin credentials
     if ($null -eq $ADSecretName) {
-        $ADCreds = Get-UserCredentials -Type 'AD' -Customer $TssFolderName
+        $ADCreds = Get-UserCredentials -Type 'AD' -Customer $TssFolder.FolderName
     } else {
-        $ADCreds = Get-UserCredentials -Type 'AD' -Customer $TssFolderName -TssSession $Session `
+        $ADCreds = Get-UserCredentials -Type 'AD' -Customer $TssFolder.FolderName -TssSession $Session `
             -TssFolder $TssFolder -TssRecords $ADSecrets -SecretName $ADSecretName
     }
 
     # Obtain Local Machine Admin credentials
     if ($null -eq $LMSecretName) {
-        $LMCreds = Get-UserCredentials -Type 'DMZ' -Customer $TssFolderName
+        $LMCreds = Get-UserCredentials -Type 'DMZ' -Customer $TssFolder.FolderName
     } else {
-        $LMCreds = Get-UserCredentials -Type 'DMZ' -Customer $TssFolderName -TssSession $Session `
-            -TssFolder $TssFolder -TssRecords $ADSecrets -SecretName $ADSecretName
+        $LMCreds = Get-UserCredentials -Type 'DMZ' -Customer $TssFolder.FolderName -TssSession $Session `
+            -TssFolder $TssFolder -TssRecords $LMSecrets -SecretName $LMSecretName
     }
 
     $null = Close-TssSession -TssSession $Session
@@ -250,8 +251,8 @@ $Worker = {
     begin {
         $Error.Clear()
         $ScriptText = 'try { Get-Service -ErrorAction Stop | Where-Object { $_.StartType -eq "Automatic" -and ' +
-        '$_.Status -eq "Running" } | Select-Object @{Name = "VM"; Expression = ' + "{ $($VM.Name) } " +
-        '}, Name } } catch { Write-Warning "Access denied" }'
+        '$_.Status -eq "Running" } | Format-Table -Property Name -HideTableHeaders } catch { Write-Warning ' +
+        '"Access denied" }'
     }
 
     process {
@@ -264,12 +265,23 @@ $Worker = {
                 "on $($VM.Name). If this is a one-off error, please correct the credentials on the server. If " +
                 'this error repeats often, update the credentials in Thycotic.'
             } else {
-                $Configuration.ScriptResults += $TestAccess.ScriptOutput
-                <#                 if ($VM.ExtensionData.Guest.ToolsStatus -eq 'toolsOk') {
-                    $null = Stop-VMGuest -VM $VM -Server $Configuration.VIServer -Confirm:$false
+                # Convert multiline string to array of strings
+                try {
+                    $Services = (($TestAccess.ScriptOutput).Trim()).Split("`n")
+                    foreach ($Service in $Services) {
+                        $Configuration.Services += New-Object PSObject `
+                            -Property @{ VM = $VM.Name; ServiceName = $Service.Trim() }
+                    }
+                } catch [System.Management.Automation.RuntimeException] {
+                    $Configuration.ScriptErrors += "WARNING: Get-Service returned NULL on $($VM.Name)."
+                }
+
+                if ($VM.ExtensionData.Guest.ToolsStatus -eq 'toolsOk') {
+                    # $null = Stop-VMGuest -VM $VM -Server $Configuration.VIServer -Confirm:$false
                 } else {
-                    $null = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
-                } #>
+                    # $null = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
+                }
+
             }
         } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
             $Configuration.ScriptErrors += "WARNING: The credentials for $($VMcreds.Username) do not work on " +
@@ -322,7 +334,7 @@ $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $VMindex = 1
 # Create job for each VM
 foreach ($VM in $VMs) {
-    if ($VM.Guest.HostName -eq $VM.Name) {
+    if ($VM.Guest.HostName -notlike '*.*') {
         $Creds = $LMCreds
     } else {
         $Creds = $ADCreds
@@ -390,7 +402,7 @@ Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
 
 # Write script output to log file
 if (Test-Path -Path $ScriptOutput -PathType leaf) { Clear-Content -Path $ScriptOutput }
-Export-Csv -InputObject $Configuration.ScriptResults -Path -NoTypeInformation -Force
+$Configuration.Services | Export-Csv -Path $ScriptOutput -NoTypeInformation -Force
 
 # Write script errors to log file
 if (Test-Path -Path $ScriptErrors -PathType leaf) { Clear-Content -Path $ScriptErrors }
