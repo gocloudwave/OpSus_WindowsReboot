@@ -107,7 +107,7 @@ server.
 ### InvalidCertAction
 
 Define the action to take when an attempted connection to a server fails due to a certificate error. For more
-information about invalid certificates, run 'Get-Help about_invalid_certificates'.
+information about invalid certificates, run `Get-Help about_invalid_certificates`.
 
 ### vCenter
 
