@@ -2,7 +2,8 @@
 
 Takes a CSV file as input. Use a hypervisor to connect to Windows machines. Store Windows services details, issue
 power-off command, wait until all systems are powered off, start systems based on priority from CSV, and ensure
-services are back to their original state before moving to the next system.
+services are back to their original state before moving to the next system. _NOTE: Current script only supports
+VMware._
 
 ## Table of Contents
 
@@ -66,7 +67,7 @@ services are back to their original state before moving to the next system.
 
    **Example 1**
 
-   ```
+   ```csv
    Name,BootGroup
    ServerA,1
    ServerB,1
@@ -76,7 +77,7 @@ services are back to their original state before moving to the next system.
 
    **Example 2**
 
-   ```
+   ```csv
    Name,BootGroup,ShutdownGroup
    ServerA,1,3
    ServerB,1,3
@@ -106,7 +107,7 @@ server.
 ### InvalidCertAction
 
 Define the action to take when an attempted connection to a server fails due to a certificate error. For more
-information about invalid certificates, run 'Get-Help about_invalid_certificates'.
+information about invalid certificates, run `Get-Help about_invalid_certificates`.
 
 ### vCenter
 
