@@ -13,12 +13,9 @@ VMware._
   - [Requirements](#requirements)
   - [Definitions](#definitions)
     - [MinimumPowerCLIVersion](#minimumpowercliversion)
-    - [SecretTemplateLookup](#secrettemplatelookup)
-    - [ssUri](#ssuri)
     - [DNSDomain](#dnsdomain)
     - [InvalidCertAction](#invalidcertaction)
-    - [vCenter](#vcenter)
-    - [TssFolder](#tssfolder)
+    - [vCenters](#vcenters)
   - [Restart Windows VMs](#restart-windows-vms)
 
 ## Files
@@ -49,15 +46,9 @@ VMware._
    ```json
    {
      "MinimumPowerCLIVersion": "12.4.1.18769701",
-     "SecretTemplateLookup": {
-       "ActiveDirectoryAccount": 6001,
-       "LocalUserWindowsAccount": 6003
-     },
-     "ssUri": "https://domain.secretservercloud.com",
      "DNSDomain": "FABRIKAM.COM",
      "InvalidCertAction": "Ignore",
-     "vCenter": "vcenter.domain.local",
-     "TssFolder": "FolderA"
+     "vCenters": ["vcenter1.fabrikam.local", "vcenter2.fabrikam.local"]
    }
    ```
 
@@ -91,14 +82,6 @@ VMware._
 
 Set this to the minimum tested PowerCLI version this script needs to run successfully.
 
-### SecretTemplateLookup
-
-Hashtable that maps the SecretTemplateId to an `ActiveDirectoryAccount` or a `LocalUserWindowsAccount`.
-
-### ssUri
-
-SecretServer URI used for API calls to Thycotic.
-
 ### DNSDomain
 
 What domain must the server running the script belong to? This ensures the server can communciate with the vCenter
@@ -109,13 +92,9 @@ server.
 Define the action to take when an attempted connection to a server fails due to a certificate error. For more
 information about invalid certificates, run `Get-Help about_invalid_certificates`.
 
-### vCenter
+### vCenters
 
-The vCenter that can manage the specified VMs.
-
-### TssFolder
-
-The name of the top-level folder in Thycotic that contains the secrets.
+Array of vCenters to display so user can select a vCenter to connect to.
 
 ## Restart Windows VMs
 
