@@ -97,6 +97,12 @@ $ShutdownGroups = $VMTable.ShutdownGroup | Sort-Object -Unique -CaseSensitive
 
 $ADCreds = $null
 $LMCreds = $null
+
+# The Shutdown worker requires credentials; however, if the script runs in Ransomware mode, the credentials aren't
+# necessary. This creates fake credentials to pass so the worker doesn't prompt the user.
+$FakeUser = 'fakeuser'
+$FakePassword = ConvertTo-SecureString -String 'ReallyBadPasswordNoOneShouldUse' -AsPlainText -Force
+$FakeCreds = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $FakeUser, $FakePassword
 <#  Placeholder for phase 2 with Thycotic prompts
 $ADSecrets = $null
 $LMSecrets = $null
@@ -195,9 +201,11 @@ while ($null -eq $Configuration.VIServer) { $Configuration.VIServer = Connect-VI
 # Prompt user for script actions
 $Configuration.Action = myDialogBox -Title 'Reason' -Prompt 'Reason for running the script' -Values $Activities
 
-if ($Configuration.Action -eq 'Patching') {
-    $VMs = Get-VM -Name $VMTable.Name -Server $Configuration.VIServer
+$VMs = Get-VM -Name $VMTable.Name -Server $Configuration.VIServer
+$VMCount = $VMs.Count
+if ( $null -eq $VMCount ) { $VMCount = 1 }
 
+if ($Configuration.Action -eq 'Patching') {
     # Get VM Tools status for all VMs
     $VMsTools = Get-VMToolsStatus -InputObject $VMs
     foreach ($VM in $VMsTools) {
@@ -463,6 +471,8 @@ $ShutdownWorker = {
 
 $VMTable = $VMTable | Sort-Object -Property ShutdownGroup, Name -CaseSensitive
 
+$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
 if (($Configuration.Action -eq 'Patching') `
         -or ($Configuration.Action -eq 'Ransomware' -and $RansomwareAction -eq 'Shutdown')) {
     foreach ($group in $ShutdownGroups) {
@@ -485,15 +495,17 @@ if (($Configuration.Action -eq 'Patching') `
         Write-Progress -Id 1 -Activity "Creating Runspaces for group $group" `
             -Status "Creating runspaces for $GroupCount VMs." -PercentComplete 0
 
-        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-
         $VMindex = 1
         # Create job for each VM
         foreach ($VM in $VMGroup) {
-            if ($VM.Guest.HostName -notlike '*.*') {
-                $Creds = $LMCreds
+            if ($RansomwareAction -eq 'Shutdown') {
+                $Creds = $FakeCreds
             } else {
-                $Creds = $ADCreds
+                if ($VM.Guest.HostName -notlike '*.*') {
+                    $Creds = $LMCreds
+                } else {
+                    $Creds = $ADCreds
+                }
             }
 
             # Saving credentials to hashtable because HostName sometimes changes after shutdown.
@@ -549,10 +561,6 @@ if (($Configuration.Action -eq 'Patching') `
 
         Write-Host "$(Get-Date -Format G): Services list saved to $ScriptOutput"
     }
-
-    $VMs = Get-VM -Name $VMTable.Name -Server $Configuration.VIServer
-    $VMCount = $VMs.Count
-    if ( $null -eq $VMCount ) { $VMCount = 1 }
 
     Write-Progress -Id 2 -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
@@ -615,21 +623,23 @@ $BootWorker = {
                 Start-Sleep -Seconds 30
             }
 
-            # Run script to check services.
-            Write-Host "$(Get-Date -Format G): Checking '$ServiceName' service status on $($VM.Name)."
-            $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
-                -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
-
-            while ($TestAccess.ScriptOutput -like 'WARNING: Access denied*') {
-                Write-Warning "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again."
-                Start-Sleep -Seconds 60
-
+            if ($Configuration.Action -eq 'Patching') {
                 # Run script to check services.
+                Write-Host "$(Get-Date -Format G): Checking '$ServiceName' service status on $($VM.Name)."
                 $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                     -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
-            }
 
-            Write-Host "$(Get-Date -Format G): '$ServiceName' service is running on $($VM.Name)."
+                while ($TestAccess.ScriptOutput -like 'WARNING: Access denied*') {
+                    Write-Warning "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again."
+                    Start-Sleep -Seconds 60
+
+                    # Run script to check services.
+                    $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
+                        -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+                }
+
+                Write-Host "$(Get-Date -Format G): '$ServiceName' service is running on $($VM.Name)."
+            }
 
         } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
             $ErrorMessage = "$(Get-Date -Format G): BOOT WARNING: The credentials for $($VMcreds.Username) do " +
@@ -679,6 +689,7 @@ if (($Configuration.Action -eq 'Patching') `
     foreach ($group in $BootGroups) {
         $GroupMembers = $VMTable | Where-Object { $_.BootGroup -ceq $group }
         $ServiceCount = ($Configuration.Services | Where-Object { $GroupMembers.Name -eq $_.VM }).Count
+        if ($null -eq $ServiceCount -or $ServiceCount -eq 0) { $ServiceCount = $VMCount }
         $VMGroup = $VMs | Where-Object { $GroupMembers.Name -eq $_.Name }
 
         # Process no more than 25% of the list at once. (Minimum value = 20)
@@ -693,7 +704,7 @@ if (($Configuration.Action -eq 'Patching') `
 
         # Display progress bar
         Write-Progress -Id 1 -Activity "Creating Runspaces for group $group" `
-            -Status "Creating runspaces for $ServiceCount VMs." -PercentComplete 0
+            -Status "Creating runspaces for $ServiceCount services on $VMCount VMs." -PercentComplete 0
 
         $ServiceIdx = 1
         # Create job for each VM
@@ -701,6 +712,7 @@ if (($Configuration.Action -eq 'Patching') `
             if ($Configuration.Action -eq 'Ransomware' -or $Configuration.Shutdown[$VM.Name]) {
                 # Using previously calculated credentials from shutdown job.
                 $Creds = $VMCreds[$VM.Name]
+                if ($null -eq $Creds) { $Creds = $FakeCreds }
                 Write-Host "$(Get-Date -Format G): Starting $($VM.Name)."
 
                 try {
@@ -733,6 +745,27 @@ if (($Configuration.Action -eq 'Patching') `
 
                         $ServiceIdx++
                     }
+                } else {
+                    $PowerShell = [powershell]::Create()
+                    $PowerShell.RunspacePool = $RunspacePool
+                    # Using a fake service to pass validation
+                    $service = 'FakeService'
+                    $null = $PowerShell.AddScript($BootWorker).AddArgument($VM).AddArgument($Creds).AddArgument($service).AddArgument($Configuration)
+
+                    $JobObj = New-Object -TypeName PSObject -Property @{
+                        Runspace   = $PowerShell.BeginInvoke()
+                        PowerShell = $PowerShell
+                    }
+
+                    $null = $Jobs.Add($JobObj)
+                    $RSPercentComplete = ($ServiceIdx / $ServiceCount ).ToString('P')
+                    $Activity = "Runspace creation for bootup: Processing $VM, Group $group"
+                    $Status = "$ServiceIdx/$ServiceCount : $RSPercentComplete Complete"
+                    $CleanPercent = $RSPercentComplete.Replace('%', '')
+                    Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete $CleanPercent
+
+                    $ServiceIdx++
+
                 }
             } else {
                 Write-Warning "$(Get-Date -Format G): Skipping $($VM.Name) because it failed during shutdown phase."
