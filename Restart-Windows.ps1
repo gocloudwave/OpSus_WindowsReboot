@@ -20,7 +20,22 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$Settings = Get-Content "$PSScriptRoot\settings.json" -Raw | ConvertFrom-Json
+
+# Prompt user for JSON file with settings
+[System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null
+
+$OpenFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+$OpenFileDialog.initialDirectory = $PSScriptRoot
+$OpenFileDialog.title = 'Select JSON file with customer settings'
+$OpenFileDialog.filter = 'JavaScript Object Notation files (*.json)|*.json'
+if ($OpenFileDialog.ShowDialog() -eq 'Cancel') {
+    $wshell = New-Object -ComObject Wscript.Shell
+    $wshell.Popup('User canceled file selection. Exiting script.', 0, 'Exiting', $Buttons.OK + $Icon.Exclamation)
+
+    Exit 1233
+}
+
+$Settings = Get-Content "$($OpenFileDialog.filename)" -Raw | ConvertFrom-Json
 
 # Button Values
 $Buttons = @{
