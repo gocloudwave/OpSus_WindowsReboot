@@ -88,7 +88,7 @@ if ($Settings.vCenterRP) {
 # Exit script if Customer field empty or if user selected no.
 if ($null -eq $ButtonClicked -or $ButtonClicked -eq $Selection.No) { Exit 1223 }
 
-# Prompt user for CSV with VMs, BootGroup, and (optionally) ShutdownGroup
+# Prompt user for CSV with VMs, Process, BootGroup, and (optionally) ShutdownGroup
 [System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null
 
 $OpenFileDialog = New-Object System.Windows.Forms.OpenFileDialog
@@ -105,6 +105,16 @@ if ($OpenFileDialog.ShowDialog() -eq 'Cancel') {
 
 $VMTable = Import-Csv -Path "$($OpenFileDialog.filename)"
 
+# Exit script if required fields are not present
+if (![bool]($VMTable | Get-Member -Name Name) -or ![bool]($VMTable | Get-Member -Name Process) `
+        -or ![bool]($VMTable | Get-Member -Name BootGroup)) {
+    $wshell = New-Object -ComObject Wscript.Shell
+    $null = $wshell.Popup('CSV malformed, please review requirements and correct. Exiting script.', 0, 'Exiting', `
+            $Buttons.OK + $Icon.Exclamation)
+
+    Exit 11
+}
+
 # Check for ShutdownGroup column, if it doesn't exist shutdown order doesn't matter set all to 1
 if (![bool]($VMTable | Get-Member -Name ShutdownGroup)) {
     $VMTable | Add-Member -MemberType NoteProperty -Name 'ShutdownGroup' -Value '1'
@@ -112,6 +122,10 @@ if (![bool]($VMTable | Get-Member -Name ShutdownGroup)) {
 
 # Correct null values in groups by replacing with 1
 foreach ($VM in $VMTable) {
+    if ($null -eq $VM.Process) {
+        $VM.Process = $false
+    }
+
     if ($null -eq $VM.BootGroup) {
         $VM.BootGroup = 1
     }
