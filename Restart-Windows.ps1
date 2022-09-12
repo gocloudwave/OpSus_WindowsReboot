@@ -159,6 +159,7 @@ $Configuration.Services = @()
 $Configuration.ScriptErrors = @()
 $Configuration.Shutdown = @{}
 $Configuration.VIServer = $null
+$Configuration.CredsTest = @{}
 
 # Base path to Secret Server
 $ssUri = $Settings.ssUri
@@ -350,6 +351,150 @@ if ($ButtonClicked -eq $Selection.Cancel) {
     $null = Close-TssSession -TssSession $Session
 }
 
+# Script block to parallelize testing credentials
+$TestCredentials = {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true, Position = 0)]
+        [ValidateNotNullorEmpty()]
+        [VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine] $VM,
+        [Parameter(Mandatory = $true, Position = 1)]
+        [ValidateNotNullorEmpty()]
+        [System.Management.Automation.PSCredential] $VMcreds,
+        [Parameter(Mandatory = $true, Position = 2)]
+        [ValidateNotNullorEmpty()]
+        $Configuration
+    )
+
+    $Error.Clear()
+    try {
+        $ScriptText = 'try { Get-WmiObject -Class Win32_ComputerSystem -ErrorAction Stop } ' +
+        "catch { Write-Warning 'Access denied' }"
+        $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
+            -GuestCredential $VMcreds -ErrorAction Stop 3> $null
+
+        if ($TestAccess.ScriptOutput -like 'WARNING: Access denied*') {
+            $Configuration.CredsTest[$VM.Name] = 'FAIL'
+        } else {
+            $Configuration.CredsTest[$VM.Name] = 'SUCCESS'
+        }
+    } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
+        $Configuration.CredsTest[$VM.Name] = 'FAIL'
+    } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidArgument] {
+        $line = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+        $params = "Parameters: Server - $($Configuration.VIServer), VM - $VM, GuestCredential - " +
+        "$($VMcreds.Username)"
+        $Configuration.ScriptErrors += "WARNING: Invalid argument processing $VM."
+        $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+        $Configuration.ScriptErrors += $line
+        $Configuration.ScriptErrors += $params
+        $Configuration.CredsTest[$VM.Name] = 'FAIL'
+    } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.ViServerConnectionException],
+    [System.InvalidOperationException],
+    [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException] {
+        $line = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+        $Configuration.ScriptErrors += "WARNING: Failure connecting to $VM."
+        $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+        $Configuration.ScriptErrors += $line
+        $Configuration.CredsTest[$VM.Name] = 'FAIL'
+    } catch {
+        $Configuration.ScriptErrors += "WARNING: Other error processing $VM."
+        $line = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+        $Configuration.ScriptErrors += $Error[0].Exception.GetType().FullName
+        $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+        $Configuration.ScriptErrors += $line
+        $Configuration.CredsTest[$VM.Name] = 'FAIL'
+    } finally {
+        $Error.Clear()
+    }
+
+}
+
+$VMTestGroup = $VMTable | Where-Object { $_.Guest.HostName -notlike '*.*' }
+$VMTestGroup += $VMTable | Where-Object { $_.Guest.HostName -like '*.*' } | Get-Random
+$VMTestCount = $VMTestGroup.Count
+
+# Process no more than 25% of the list at once. (Minimum value = 20)
+$MaxRunspaces = [Math]::Max([Math]::Ceiling($VMTestCount / 4), 20)
+
+# Create runspace pool for parralelization
+$SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+$RunspacePool = [RunspaceFactory]::CreateRunspacePool(1, $MaxRunspaces, $SessionState, $Host)
+$RunspacePool.Open()
+
+$Jobs = New-Object System.Collections.ArrayList
+
+# Display progress bar
+Write-Progress -Id 1 -Activity 'Creating Runspaces to test credentials' `
+    -Status "Creating runspaces for $VMTestCount VMs." -PercentComplete 0
+
+$VMindex = 1
+# Create job for each VM
+
+foreach ($VM in $VMTestGroup) {
+    <# $VM is the current item #>
+    $PowerShell = [powershell]::Create()
+    $PowerShell.RunspacePool = $RunspacePool
+    $null = $PowerShell.AddScript($TestCredentials).AddArgument($VM).AddArgument($Creds).AddArgument($Configuration)
+
+    $JobObj = New-Object -TypeName PSObject -Property @{
+        Runspace   = $PowerShell.BeginInvoke()
+        PowerShell = $PowerShell
+    }
+
+    $null = $Jobs.Add($JobObj)
+    $RSPercentComplete = ($VMindex / $VMTestCount).ToString('P')
+    $Activity = "Runspace creation: Processing $VM"
+    $Status = "$VMindex/$VMTestCount : $RSPercentComplete Complete"
+    $CleanPercent = $RSPercentComplete.Replace('%', '')
+    Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete $CleanPercent
+
+    $VMindex++
+}
+
+Write-Progress -Id 1 -Activity 'Runspace creation to test credentials' -Completed
+
+# Used to determine percentage completed.
+$TotalJobs = $Jobs.Runspace.Count
+
+Write-Progress -Id 2 -Activity 'Testing credentials' -Status 'Verifying credentials' `
+    -PercentComplete 0
+
+# Update percentage complete and wait until all jobs are finished.
+while ($Jobs.Runspace.IsCompleted -contains $false) {
+    $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
+    $PercentComplete = ($CompletedJobs / $TotalJobs).ToString('P')
+    $Status = "$CompletedJobs/$TotalJobs : $PercentComplete Complete"
+    Write-Progress -Id 2 -Activity 'Testing credentials' -Status $Status `
+        -PercentComplete $PercentComplete.Replace('%', '')
+    Start-Sleep -Milliseconds 100
+}
+
+# Clean up runspace.
+$RunspacePool.Close()
+
+Write-Progress -Id 2 -Activity 'Testing credentials' -Completed
+
+if ($Configuration.CredsTest.ContainsValue('FAIL')) {
+    <# Clean up and exit script #>
+    # Disconnect from vCenter
+    Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
+
+    $FailedLogins = $Configuration.CredsTest.GetEnumerator() | Where-Object { $_.Value -eq 'FAIL' }
+
+    # Write script errors to log file
+    if (Test-Path -Path $ScriptErrors -PathType leaf) { Clear-Content -Path $ScriptErrors }
+    Add-Content -Path $ScriptErrors -Value $Configuration.ScriptErrors
+
+    Write-Host "$(Get-Date -Format G): Script error log saved to $ScriptErrors"
+
+    $wshell = New-Object -ComObject Wscript.Shell
+    $null = $wshell.Popup("Login failed for one or more servers: $($FailedLogins.Key)", 0, 'Login failed', `
+            $Buttons.OK + $Icon.Exclamation)
+
+    Exit 5
+}
+
 # Script block to parallelize collecting VM data and shutting down the VM
 $ShutdownWorker = {
     [CmdletBinding()]
@@ -489,14 +634,10 @@ foreach ($group in $ShutdownGroups) {
     $VMindex = 1
     # Create job for each VM
     foreach ($VM in $VMGroup) {
-        if ($RansomwareAction -eq 'Shutdown') {
-            $Creds = $FakeCreds
+        if ($VM.Guest.HostName -notlike '*.*') {
+            $Creds = $LMCreds
         } else {
-            if ($VM.Guest.HostName -notlike '*.*') {
-                $Creds = $LMCreds
-            } else {
-                $Creds = $ADCreds
-            }
+            $Creds = $ADCreds
         }
 
         # Saving credentials to hashtable because HostName sometimes changes after shutdown.
