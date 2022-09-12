@@ -120,8 +120,9 @@ if (![bool]($VMTable | Get-Member -Name ShutdownGroup)) {
     $VMTable | Add-Member -MemberType NoteProperty -Name 'ShutdownGroup' -Value '1'
 }
 
-# Correct null values in groups by replacing with 1
+# Correct null values in groups by replacing with 1 or false
 foreach ($VM in $VMTable) {
+    $VM.Process = [System.Convert]::ToBoolean($VM.Process)
     if ($null -eq $VM.Process) {
         $VM.Process = $false
     }
@@ -134,6 +135,9 @@ foreach ($VM in $VMTable) {
         $VM.ShutdownGroup = 1
     }
 }
+
+# Drop all rows that the script shouldn't process
+$VMTable = $VMTable | Where-Object { $_.Process -ceq $true }
 
 $BootGroups = $VMTable.BootGroup | Sort-Object -Unique -CaseSensitive
 $ShutdownGroups = $VMTable.ShutdownGroup | Sort-Object -Unique -CaseSensitive
@@ -148,7 +152,7 @@ $ScriptOutput = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUnive
 $ScriptErrors = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUniversal)-ScriptErrors.log"
 $ADTssTemplateId = $Settings.SecretTemplateLookup.ActiveDirectoryAccount
 $LMTssTemplateId = $Settings.SecretTemplateLookup.LocalUserWindowsAccount
-$TssUsername = "$($Settings.TssDomain)\$Env:USERNAME"
+$TssUsername = "$($Settings.TssDomain)\$($Settings.TssUser)"
 # Create synchronized hashtable
 $Configuration = [hashtable]::Synchronized(@{})
 $Configuration.Services = @()
@@ -226,17 +230,8 @@ if ($null -eq $TssPSModule) {
 $null = Set-PowerCLIConfiguration -InvalidCertificateAction $Settings.InvalidCertAction -Scope Session `
     -Confirm:$false
 
-# Prompt user for vCenter to connect to
-$vCenter = myDialogBox -Title 'Select a vCenter:' -Prompt 'Please select a vCenter:' -Values $Settings.vCenters
-
-if ($null -eq $vCenter) {
-    $wshell = New-Object -ComObject Wscript.Shell
-    $null = $wshell.Popup('Exiting before selecting a vCenter.', 0, 'Cancel', $Buttons.OK + $Icon.Stop)
-    Exit 1223
-}
-
-# Connect to vCenter selected using logged on user credentials
-while ($null -eq $Configuration.VIServer) { $Configuration.VIServer = Connect-VIServer $vCenter }
+# Connect to vCenter using logged on user credentials
+while ($null -eq $Configuration.VIServer) { $Configuration.VIServer = Connect-VIServer $Settings.vCenter }
 
 $VMs = Get-VM -Name $VMTable.Name -Server $Configuration.VIServer
 $VMCount = $VMs.Count
@@ -283,9 +278,9 @@ while (($null -eq $Session) -and ($ButtonClicked -ne $Selection.Cancel)) {
 
 if ($ButtonClicked -eq $Selection.Cancel) {
     if ($Session) { $null = Close-TssSession -TssSession $Session }
-    $ADCreds = Get-Credential -Message 'User canceled Thycotic login. Please enter Domain Admin credentials.'
-    $LMCreds = Get-Credential -Message 'User canceled Thycotic login. Please enter Local Machine Admin ' +
-    'credentials.'
+    $Title = 'User canceled Thycotic login.'
+    $ADCreds = Get-Credential -Message 'Please enter Domain Admin credentials.' -Title $Title
+    $LMCreds = Get-Credential -Message 'Please enter Local Machine Admin credentials.' -Title $Title
 } else {
     try {
         $TssFolders = Search-TssFolders -TssSession $Session -TopLevelOnly $true -SearchText $Settings.TssFolder `
