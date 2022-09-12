@@ -521,7 +521,7 @@ $ShutdownWorker = {
     begin {
         $Error.Clear()
         $ScriptText = 'try { Get-Service -ErrorAction Stop | Where-Object { $_.StartType -eq "Automatic" -and ' +
-        '$_.Status -eq "Running" } | Format-Table -Property Name -HideTableHeaders } catch { Write-Warning ' +
+        '$_.Status -ne "Running" } | Format-Table -Property Name -HideTableHeaders } catch { Write-Warning ' +
         '"Access denied" }'
     }
 
@@ -721,14 +721,8 @@ $BootWorker = {
         [System.Management.Automation.PSCredential]
         $VMCreds,
 
-        # Parameter help description
-        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 2)]
-        [ValidateNotNullOrEmpty()]
-        [string]
-        $ServiceName,
-
         # Hash table for configuration data
-        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 3)]
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 2)]
         [ValidateNotNullOrEmpty()]
         [hashtable]
         $Configuration
@@ -739,8 +733,11 @@ $BootWorker = {
         # Run two Powershell commands with one Invoke-VMScript.
         # Get service status for all services in ServicesList and use while loop to wait until all services are
         # running.
-        $ScriptText = "try { while ((Get-Service -Name '$ServiceName' -ErrorAction Stop).Status -ne 'Running') " +
-        '{ Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }'
+        $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
+        $ServiceList = "'$($ServerServices -join "','")'"
+        $ScriptText = '$Services = ' + "$ServiceList; try { while (Get-Service -Exclude " + '$Services | ' +
+        'Where-Object { $_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property ' +
+        'Name -HideTableHeaders ) { Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }'
     }
 
     process {
@@ -753,7 +750,8 @@ $BootWorker = {
             }
 
             # Run script to check services.
-            Write-Host "$(Get-Date -Format G): Checking '$ServiceName' service status on $($VM.Name)."
+            Write-Host "$(Get-Date -Format G): Checking Automatic and Running services on $($VM.Name). " +
+            "Excluding ($ServiceList) from check as these services were not running during shutdown."
             $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
@@ -766,7 +764,7 @@ $BootWorker = {
                     -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
             }
 
-            Write-Host "$(Get-Date -Format G): '$ServiceName' service is running on $($VM.Name)."
+            Write-Host "$(Get-Date -Format G): Finished checking services on $($VM.Name)."
 
         } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
             $ErrorMessage = "$(Get-Date -Format G): BOOT WARNING: The credentials for $($VMcreds.Username) do " +
@@ -837,7 +835,6 @@ foreach ($group in $BootGroups) {
         if ($Configuration.Shutdown[$VM.Name]) {
             # Using previously calculated credentials from shutdown job.
             $Creds = $VMCreds[$VM.Name]
-            if ($null -eq $Creds) { $Creds = $FakeCreds }
             Write-Host "$(Get-Date -Format G): Starting $($VM.Name)."
 
             try {
@@ -853,7 +850,7 @@ foreach ($group in $BootGroups) {
 
                 $PowerShell = [powershell]::Create()
                 $PowerShell.RunspacePool = $RunspacePool
-                $null = $PowerShell.AddScript($BootWorker).AddArgument($VM).AddArgument($Creds).AddArgument($service).AddArgument($Configuration)
+                $null = $PowerShell.AddScript($BootWorker).AddArgument($VM).AddArgument($Creds).AddArgument($Configuration)
 
                 $JobObj = New-Object -TypeName PSObject -Property @{
                     Runspace   = $PowerShell.BeginInvoke()
