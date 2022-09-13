@@ -192,7 +192,8 @@ if ($null -eq $PowerCLIPSModule -or $PowerCLIAllPrograms) {
 } elseif ($PowerCLIPSModule.Version -lt (Find-Module -Name VMware.PowerCLI).Version) {
     # Update PowerCLI if not at the latest version
     try {
-        Update-Module -Name VMware.PowerCLI -Force
+        Start-Process -FilePath powershell.exe -ArgumentList { Update-Module -Name VMware.PowerCLI -Force } `
+            -Verb RunAs
     } catch {
         $wshell = New-Object -ComObject Wscript.Shell
         $null = $wshell.Popup('Unable to update PowerCLI to latest version.', 0, 'Failed update', `
@@ -217,7 +218,8 @@ if ($null -eq $TssPSModule) {
     }
     Install-Module -Name Thycotic.SecretServer -Confirm:$false -AllowClobber -Force
 } elseif ($TssPSModule.Version -lt (Find-Module -Name Thycotic.SecretServer).Version) {
-    Update-Module -Name Thycotic.SecretServer -Force
+    Start-Process -FilePath powershell.exe -ArgumentList { Update-Module -Name Thycotic.SecretServer -Force } `
+        -Verb RunAs
 
     # Uninstall old versions of Thycotic.SecretServer
     Get-InstalledModule -Name Thycotic.SecretServer | ForEach-Object {
@@ -810,12 +812,11 @@ $VMTable = $VMTable | Sort-Object -Property BootGroup, Name -CaseSensitive
 
 foreach ($group in $BootGroups) {
     $GroupMembers = $VMTable | Where-Object { $_.BootGroup -ceq $group }
-    $ServiceCount = ($Configuration.Services | Where-Object { $GroupMembers.Name -eq $_.VM }).Count
-    if ($null -eq $ServiceCount -or $ServiceCount -eq 0) { $ServiceCount = $VMCount }
     $VMGroup = $VMs | Where-Object { $GroupMembers.Name -eq $_.Name }
+    $VMCount = $VMGroup.Count
 
     # Process no more than 25% of the list at once. (Minimum value = 20)
-    $MaxRunspaces = [Math]::Max([Math]::Ceiling($ServiceCount / 4), 20)
+    $MaxRunspaces = [Math]::Max([Math]::Ceiling($VMCount / 4), 20)
 
     # Create runspace pool for parralelization
     $SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
@@ -826,9 +827,9 @@ foreach ($group in $BootGroups) {
 
     # Display progress bar
     Write-Progress -Id 1 -Activity "Creating Runspaces for group $group" `
-        -Status "Creating runspaces for $ServiceCount services on $VMCount VMs." -PercentComplete 0
+        -Status "Creating runspaces for $VMCount VMs." -PercentComplete 0
 
-    $ServiceIdx = 1
+    $VMIdx = 1
     # Create job for each VM
     foreach ($VM in $VMGroup) {
         if ($Configuration.Shutdown[$VM.Name]) {
@@ -843,28 +844,23 @@ foreach ($group in $BootGroups) {
                 $Configuration.ScriptErrors += "$(Get-Date -Format G): WARNING: Unable to start $($VM.Name)."
             }
 
-            $ServicesList = $Configuration.Services | Where-Object { $_.VM -eq $VM.Name }
+            $PowerShell = [powershell]::Create()
+            $PowerShell.RunspacePool = $RunspacePool
+            $null = $PowerShell.AddScript($BootWorker).AddArgument($VM).AddArgument($Creds).AddArgument($Configuration)
 
-            foreach ($service in $ServicesList.ServiceName) {
-
-                $PowerShell = [powershell]::Create()
-                $PowerShell.RunspacePool = $RunspacePool
-                $null = $PowerShell.AddScript($BootWorker).AddArgument($VM).AddArgument($Creds).AddArgument($Configuration)
-
-                $JobObj = New-Object -TypeName PSObject -Property @{
-                    Runspace   = $PowerShell.BeginInvoke()
-                    PowerShell = $PowerShell
-                }
-
-                $null = $Jobs.Add($JobObj)
-                $RSPercentComplete = ($ServiceIdx / $ServiceCount).ToString('P')
-                $Activity = "Runspace creation for bootup: Processing $service on $VM, Group $group"
-                $Status = "$ServiceIdx/$ServiceCount : $RSPercentComplete Complete"
-                $CleanPercent = $RSPercentComplete.Replace('%', '')
-                Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete $CleanPercent
-
-                $ServiceIdx++
+            $JobObj = New-Object -TypeName PSObject -Property @{
+                Runspace   = $PowerShell.BeginInvoke()
+                PowerShell = $PowerShell
             }
+
+            $null = $Jobs.Add($JobObj)
+            $RSPercentComplete = ($VMIdx / $VMCount).ToString('P')
+            $Activity = "Runspace creation for bootup: Processing $service on $VM, Group $group"
+            $Status = "$VMIdx/$VMCount : $RSPercentComplete Complete"
+            $CleanPercent = $RSPercentComplete.Replace('%', '')
+            Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete $CleanPercent
+
+            $VMIdx++
         } else {
             Write-Warning "$(Get-Date -Format G): Skipping $($VM.Name) because it failed during shutdown phase."
         }
