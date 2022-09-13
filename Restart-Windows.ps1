@@ -689,12 +689,6 @@ foreach ($group in $ShutdownGroups) {
 
     Write-Progress -Id 2 -Activity "Processing shutdown; Group $group" -Completed
 
-    # Write services data to CSV. If manual intervention is needed, user can access this file to check services.
-    if (Test-Path -Path $ScriptOutput -PathType leaf) { Clear-Content -Path $ScriptOutput }
-    $Configuration.Services | Export-Csv -Path $ScriptOutput -NoTypeInformation -Force
-
-    Write-Host "$(Get-Date -Format G): Services list saved to $ScriptOutput"
-
     Write-Progress -Id 2 -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
     while ($VMs.PowerState -contains 'PoweredOn') {
@@ -709,6 +703,14 @@ foreach ($group in $ShutdownGroups) {
 
     Write-Progress -Id 2 -Activity 'Shutdown' -Completed
 }
+
+# Write services data to CSV. If manual intervention is needed, user can access this file to check services.
+if (Test-Path -Path $ScriptOutput -PathType leaf) { Clear-Content -Path $ScriptOutput }
+$Configuration.Services | Export-Csv -Path $ScriptOutput -NoTypeInformation -Force
+
+Write-Host "$(Get-Date -Format G): Services list saved to $ScriptOutput"
+
+
 # Script block to parallelize booting VMs
 $BootWorker = {
     [CmdletBinding()]
