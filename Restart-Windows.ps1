@@ -178,7 +178,6 @@ if ($Env:USERDNSDOMAIN -ne $Settings.DNSDomain) {
 . "$PSScriptRoot\Get-UserCredentials.ps1"
 . "$PSScriptRoot\Get-VMToolsStatus.ps1"
 . "$PSScriptRoot\User-Prompts.ps1"
-. "$PSScriptRoot\Get-InstalledApplications.ps1"
 
 # Install or update to latest PowerCLI version
 $PowerCLIPSModule = Get-Module -Name VMware.PowerCLI -ListAvailable
