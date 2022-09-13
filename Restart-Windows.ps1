@@ -747,11 +747,13 @@ $BootWorker = {
         # running.
         $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
         if ($null -eq $ServerServices) {
-            Write-Host "No services were Automatic and not Running during shutdown on $($VM.Name)"
+            $msg = "No services were Automatic and not Running during shutdown on $($VM.Name). Verify all " +
+            'Automatic services are running on the server.'
+            Write-Host $msg -ForegroundColor DarkYellow -BackgroundColor Black
             $ServiceList = 'N/A'
-            $ScriptText = 'try { while (Get-Service  | Where-Object { $_.StartType -eq "Automatic" -and ' +
-            '$_.Status -ne "Running" } | Format-Table -Property Name -HideTableHeaders ) { Start-Sleep ' +
-            '-Seconds 1 } } catch { Write-Warning "Access denied" }'
+            $ScriptText = '$Timeout = 0; try { while ((Get-Service  | Where-Object { $_.StartType -eq ' +
+            '"Automatic" -and $_.Status -ne "Running" } | Format-Table -Property Name -HideTableHeaders) -and ' +
+            '($Timeout -le 120)) { $Timeout++; Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }'
         } else {
             $ServiceList = "'$($ServerServices -join "','")'"
             $ScriptText = '$Services = ' + "$ServiceList; try { while (Get-Service -Exclude " + '$Services | ' +
