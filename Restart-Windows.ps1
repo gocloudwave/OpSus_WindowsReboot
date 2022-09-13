@@ -760,8 +760,9 @@ $BootWorker = {
             }
 
             # Run script to check services.
-            Write-Host "$(Get-Date -Format G): Checking Automatic and Running services on $($VM.Name). " +
-            "Excluding ($ServiceList) from check as these services were not running during shutdown."
+            $msg = "$(Get-Date -Format G): Checking Automatic and Running services on $($VM.Name). Excluding " +
+            "($ServiceList) from check as these services were not running during shutdown."
+            Write-Host $msg
             $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
