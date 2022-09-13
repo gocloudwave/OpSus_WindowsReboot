@@ -187,13 +187,12 @@ $PowerCLIAllPrograms = Get-Package -ProviderName Programs -IncludeWindowsInstall
 if ($null -eq $PowerCLIPSModule -or $PowerCLIAllPrograms) {
     # Call Install-PowerCLI
     Start-Process -FilePath powershell.exe `
-        -ArgumentList { . "$PSScriptRoot\Install-PowerCLI.ps1"; Install-PowerCLI } -Verb RunAs
-    # Start-Process -FilePath 'Install-PowerCLI.ps1' -WorkingDirectory $PSScriptRoot -Verb RunAs
+        -ArgumentList { . "$PSScriptRoot\Install-PowerCLI.ps1"; Install-PowerCLI } -Verb RunAs -Wait
 } elseif ($PowerCLIPSModule.Version -lt (Find-Module -Name VMware.PowerCLI).Version) {
     # Update PowerCLI if not at the latest version
     try {
         Start-Process -FilePath powershell.exe -ArgumentList { Update-Module -Name VMware.PowerCLI -Force } `
-            -Verb RunAs
+            -Verb RunAs -Wait
     } catch {
         $wshell = New-Object -ComObject Wscript.Shell
         $null = $wshell.Popup('Unable to update PowerCLI to latest version.', 0, 'Failed update', `
@@ -208,7 +207,7 @@ if ($null -eq $PowerCLIPSModule -or $PowerCLIAllPrograms) {
             $CurrVersion = $PSItem.Version
             Get-InstalledModule -Name $PSItem.Name -AllVersions | Where-Object -Property Version -LT $CurrVersion
         } | Uninstall-Module -Verbose
-    } -Verb RunAs
+    } -Verb RunAs -Wait
 }
 
 # Install or update to latest Thycotic.SecretServer PowerShell module
@@ -221,7 +220,7 @@ if ($null -eq $TssPSModule) {
     Install-Module -Name Thycotic.SecretServer -Confirm:$false -AllowClobber -Force
 } elseif ($TssPSModule.Version -lt (Find-Module -Name Thycotic.SecretServer).Version) {
     Start-Process -FilePath powershell.exe -ArgumentList { Update-Module -Name Thycotic.SecretServer -Force } `
-        -Verb RunAs
+        -Verb RunAs -Wait
 
     # Uninstall old versions of Thycotic.SecretServer
     Start-Process -FilePath powershell.exe -ArgumentList {
@@ -229,7 +228,7 @@ if ($null -eq $TssPSModule) {
             $CurrVersion = $PSItem.Version
             Get-InstalledModule -Name $PSItem.Name -AllVersions | Where-Object -Property Version -LT $CurrVersion
         } | Uninstall-Module -Verbose
-    } -Verb RunAs
+    } -Verb RunAs -Wait
 }
 
 # Use invalid certificate action from settings.json
