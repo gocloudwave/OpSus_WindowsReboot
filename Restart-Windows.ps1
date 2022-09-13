@@ -756,6 +756,7 @@ $BootWorker = {
             while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
                 $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
                 # Give the machine time before attempting login after boot up
+                Write-Host "$(Get-Date -Format G): $($VM.Name) does not have a DNS name yet. Waiting 30 seconds."
                 Start-Sleep -Seconds 30
             }
 
