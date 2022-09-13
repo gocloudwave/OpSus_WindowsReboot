@@ -193,7 +193,7 @@ if ($null -eq $PowerCLIPSModule -or $PowerCLIAllPrograms) {
     try {
         Start-Process -FilePath powershell.exe -ArgumentList {
             try {
-                Update-Module -Name VMware.PowerCLI -Force
+                Update-Module -Name VMware.PowerCLI -Force -ErrorAction $ErrorActionPreference
             } catch {
                 Install-Module -Name VMware.PowerCLI -Force -SkipPublisherCheck
             }
