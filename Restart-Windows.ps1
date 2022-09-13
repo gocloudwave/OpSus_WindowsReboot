@@ -749,7 +749,7 @@ $BootWorker = {
         if ($null -eq $ServerServices) {
             $msg = "No services were Automatic and not Running during shutdown on $($VM.Name). Verify all " +
             'Automatic services are running on the server.'
-            Write-Host $msg -ForegroundColor DarkYellow -BackgroundColor Black
+            Write-Host $msg -ForegroundColor Red -BackgroundColor Black
             $ServiceList = 'N/A'
             $ScriptText = '$Timeout = 0; try { while ((Get-Service  | Where-Object { $_.StartType -eq ' +
             '"Automatic" -and $_.Status -ne "Running" } | Format-Table -Property Name -HideTableHeaders) -and ' +
