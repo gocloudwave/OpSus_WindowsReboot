@@ -558,6 +558,7 @@ $ShutdownWorker = {
                 } catch [System.Management.Automation.RuntimeException] {
                     $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on $($VM.Name)."
                     $Configuration.ScriptErrors += $msg
+                    Write-Host $msg
                 }
 
                 if ($VM.ExtensionData.Guest.ToolsStatus -eq 'toolsOk') {
@@ -746,13 +747,20 @@ $BootWorker = {
         # running.
         $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
         if ($null -eq $ServerServices) {
-            <# Add a fake service to prevent try/catch failure when no Automatic services were stopped #>
-            $ServerServices = 'FakeService'
+            Write-Host "No services were Automatic and not Running during shutdown on $($VM.Name)"
+            $ServiceList = 'N/A'
+            $ScriptText = 'try { while (Get-Service  | Where-Object { $_.StartType -eq "Automatic" -and ' +
+            '$_.Status -ne "Running" } | Format-Table -Property Name -HideTableHeaders ) { Start-Sleep ' +
+            '-Seconds 1 } } catch { Write-Warning "Access denied" }'
+        } else {
+            $ServiceList = "'$($ServerServices -join "','")'"
+            $ScriptText = '$Services = ' + "$ServiceList; try { while (Get-Service -Exclude " + '$Services | ' +
+            'Where-Object { $_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property' +
+            ' Name -HideTableHeaders ) { Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }'
         }
-        $ServiceList = "'$($ServerServices -join "','")'"
-        $ScriptText = '$Services = ' + "$ServiceList; try { while (Get-Service -Exclude " + '$Services | ' +
-        'Where-Object { $_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property ' +
-        'Name -HideTableHeaders ) { Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }'
+
+        # Wait 60 seconds so VM has time to obtain DNS HostName
+        Start-Sleep -Seconds 60
     }
 
     process {
