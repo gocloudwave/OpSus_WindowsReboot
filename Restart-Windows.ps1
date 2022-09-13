@@ -191,8 +191,13 @@ if ($null -eq $PowerCLIPSModule -or $PowerCLIAllPrograms) {
 } elseif ($PowerCLIPSModule.Version -lt (Find-Module -Name VMware.PowerCLI).Version) {
     # Update PowerCLI if not at the latest version
     try {
-        Start-Process -FilePath powershell.exe -ArgumentList { Update-Module -Name VMware.PowerCLI -Force } `
-            -Verb RunAs -Wait
+        Start-Process -FilePath powershell.exe -ArgumentList {
+            try {
+                Update-Module -Name VMware.PowerCLI -Force
+            } catch {
+                Install-Module -Name VMware.PowerCLI -Force -SkipPublisherCheck
+            }
+        } -Verb RunAs -Wait
     } catch {
         $wshell = New-Object -ComObject Wscript.Shell
         $null = $wshell.Popup('Unable to update PowerCLI to latest version.', 0, 'Failed update', `
