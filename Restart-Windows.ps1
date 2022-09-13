@@ -203,10 +203,12 @@ if ($null -eq $PowerCLIPSModule -or $PowerCLIAllPrograms) {
     }
 
     # Uninstall old versions of PowerCLI
-    Get-InstalledModule -Name VMware.PowerCLI | ForEach-Object {
-        $CurrentVersion = $PSItem.Version
-        Get-InstalledModule -Name $PSItem.Name -AllVersions | Where-Object -Property Version -LT $CurrentVersion
-    } | Uninstall-Module -Verbose
+    Start-Process -FilePath powershell.exe -ArgumentList {
+        Get-InstalledModule -Name VMware.PowerCLI | ForEach-Object {
+            $CurrVersion = $PSItem.Version
+            Get-InstalledModule -Name $PSItem.Name -AllVersions | Where-Object -Property Version -LT $CurrVersion
+        } | Uninstall-Module -Verbose
+    } -Verb RunAs
 }
 
 # Install or update to latest Thycotic.SecretServer PowerShell module
@@ -222,10 +224,12 @@ if ($null -eq $TssPSModule) {
         -Verb RunAs
 
     # Uninstall old versions of Thycotic.SecretServer
-    Get-InstalledModule -Name Thycotic.SecretServer | ForEach-Object {
-        $CurrentVersion = $PSItem.Version
-        Get-InstalledModule -Name $PSItem.Name -AllVersions | Where-Object -Property Version -LT $CurrentVersion
-    } | Uninstall-Module -Verbose
+    Start-Process -FilePath powershell.exe -ArgumentList {
+        Get-InstalledModule -Name Thycotic.SecretServer | ForEach-Object {
+            $CurrVersion = $PSItem.Version
+            Get-InstalledModule -Name $PSItem.Name -AllVersions | Where-Object -Property Version -LT $CurrVersion
+        } | Uninstall-Module -Verbose
+    } -Verb RunAs
 }
 
 # Use invalid certificate action from settings.json
