@@ -735,6 +735,10 @@ $BootWorker = {
         # Get service status for all services in ServicesList and use while loop to wait until all services are
         # running.
         $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
+        if ($null -eq $ServerServices) {
+            <# Add a fake service to prevent try/catch failure when no Automatic services were stopped #>
+            $ServerServices = 'FakeService'
+        }
         $ServiceList = "'$($ServerServices -join "','")'"
         $ScriptText = '$Services = ' + "$ServiceList; try { while (Get-Service -Exclude " + '$Services | ' +
         'Where-Object { $_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property ' +
