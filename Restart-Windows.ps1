@@ -558,7 +558,8 @@ $ShutdownWorker = {
                 } catch [System.Management.Automation.RuntimeException] {
                     $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on $($VM.Name)."
                     $Configuration.ScriptErrors += $msg
-                    Write-Host $msg
+                    Write-Host $msg -ForegroundColor Yellow -BackgroundColor Black
+                    Write-Host $TestAccess.ScriptOutput -ForegroundColor Yellow -BackgroundColor Black
                 }
 
                 if ($VM.ExtensionData.Guest.ToolsStatus -eq 'toolsOk') {
