@@ -559,7 +559,7 @@ $ShutdownWorker = {
                 } catch [System.Management.Automation.RuntimeException] {
                     $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on $($VM.Name)." +
                     ' Retrying.'
-                    Write-Information $msg
+                    Write-Host $msg -BackgroundColor DarkGray
                     $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText `
                         $ScriptText -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
@@ -584,7 +584,7 @@ $ShutdownWorker = {
                             "$($VM.Name). This is the second time all Automatic services were running. " +
                             'Script will require *all* Automatic services to run on boot for this server.'
                             $Configuration.ScriptErrors += $msg
-                            Write-Information $msg
+                            Write-Host $msg -BackgroundColor DarkGray
                         }
                     }
                 }
@@ -777,7 +777,7 @@ $BootWorker = {
         if ($null -eq $ServerServices) {
             $msg = "No services were Automatic and not Running during shutdown on $($VM.Name). Verify all " +
             'Automatic services are running on the server.'
-            Write-Information $msg
+            Write-Host $msg -BackgroundColor DarkGray
             $ServiceList = 'N/A'
             $ScriptText = 'try { while (Get-Service  | Where-Object { $_.StartType -eq ' +
             '"Automatic" -and $_.Status -ne "Running" } | Format-Table -Property Name -HideTableHeaders) ' +
@@ -811,7 +811,8 @@ $BootWorker = {
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
             while ($ServicesCheck.ScriptOutput -like 'WARNING: Access denied*') {
-                Write-Warning "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again."
+                Write-Host "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again." `
+                    -BackgroundColor DarkYellow
                 Start-Sleep -Seconds 60
 
                 # Run script to check services.
@@ -894,7 +895,7 @@ foreach ($group in $BootGroups) {
             try {
                 $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
             } catch {
-                Write-Warning "$(Get-Date -Format G): Unable to start $($VM.Name)."
+                Write-Host "$(Get-Date -Format G): Unable to start $($VM.Name)." -BackgroundColor DarkYellow
                 $Configuration.ScriptErrors += "$(Get-Date -Format G): WARNING: Unable to start $($VM.Name)."
             }
 
@@ -916,7 +917,8 @@ foreach ($group in $BootGroups) {
 
             $VMIdx++
         } else {
-            Write-Warning "$(Get-Date -Format G): Skipping $($VM.Name) because it failed during shutdown phase."
+            Write-Host "$(Get-Date -Format G): Skipping $($VM.Name) because it failed during shutdown phase." `
+                -BackgroundColor DarkRed
         }
     }
 
