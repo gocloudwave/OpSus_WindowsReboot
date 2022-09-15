@@ -556,10 +556,36 @@ $ShutdownWorker = {
                     }
                     Write-Host "$(Get-Date -Format G): Collected services for $($VM.Name)."
                 } catch [System.Management.Automation.RuntimeException] {
-                    $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on $($VM.Name)."
-                    $Configuration.ScriptErrors += $msg
-                    Write-Host $msg -ForegroundColor Yellow -BackgroundColor Black
-                    Write-Host $TestAccess.ScriptOutput -ForegroundColor Yellow -BackgroundColor Black
+                    $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on $($VM.Name)." +
+                    ' Retrying.'
+                    Write-Information $msg
+                    $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
+                        -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+
+                    if ($TestAccess.ScriptOutput -like 'WARNING: Access denied*') {
+                        $ErrorMessage = "$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for " +
+                        "$($VMcreds.Username) do not work on $($VM.Name). If this is a one-off error, please " +
+                        'correct the credentials on the server. If this error repeats often, update the ' +
+                        'credentials in Thycotic. Service collection failed.'
+                        $Configuration.ScriptErrors += $ErrorMessage
+                        $Configuration.Shutdown[$VM.Name] = $false
+                    } else {
+                        # Convert multiline string to array of strings
+                        try {
+                            $Services = (($TestAccess.ScriptOutput).Trim()).Split("`n")
+                            foreach ($Service in $Services) {
+                                $Configuration.Services += New-Object PSObject `
+                                    -Property @{ VM = $VM.Name; ServiceName = $Service.Trim() }
+                            }
+                            Write-Host "$(Get-Date -Format G): Collected services for $($VM.Name)."
+                        } catch [System.Management.Automation.RuntimeException] {
+                            $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on " +
+                            "$($VM.Name). This is the second time all Automatic services were running. " +
+                            'Script will require *all* Automatic services to run on boot for this server.'
+                            $Configuration.ScriptErrors += $msg
+                            Write-Information $msg
+                        }
+                    }
                 }
 
                 if ($VM.ExtensionData.Guest.ToolsStatus -eq 'toolsOk') {
@@ -750,7 +776,7 @@ $BootWorker = {
         if ($null -eq $ServerServices) {
             $msg = "No services were Automatic and not Running during shutdown on $($VM.Name). Verify all " +
             'Automatic services are running on the server.'
-            Write-Host $msg -ForegroundColor Red -BackgroundColor Black
+            Write-Information $msg
             $ServiceList = 'N/A'
             $ScriptText = '$Timeout = 0; try { while ((Get-Service  | Where-Object { $_.StartType -eq ' +
             '"Automatic" -and $_.Status -ne "Running" } | Format-Table -Property Name -HideTableHeaders) -and ' +
@@ -779,7 +805,7 @@ $BootWorker = {
             # Run script to check services.
             $msg = "$(Get-Date -Format G): Checking Automatic and Running services on $($VM.Name). Excluding " +
             "($ServiceList) from check as these services were not running during shutdown."
-            Write-Host $msg
+            Write-Information $msg
             $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
