@@ -536,6 +536,7 @@ $ShutdownWorker = {
 
     process {
         try {
+            Write-Host "Attempting service collection on $($VM.Name)."
             $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
