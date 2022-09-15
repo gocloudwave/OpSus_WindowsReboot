@@ -536,10 +536,10 @@ $ShutdownWorker = {
 
     process {
         try {
-            $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
+            $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
-            if ($TestAccess.ScriptOutput -like 'WARNING: Access denied*') {
+            if ($CollectedServices.ScriptOutput -like 'WARNING: Access denied*') {
                 $ErrorMessage = "$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for " +
                 "$($VMcreds.Username) do not work on $($VM.Name). If this is a one-off error, please correct " +
                 'the credentials on the server. If this error repeats often, update the credentials in ' +
@@ -549,7 +549,7 @@ $ShutdownWorker = {
             } else {
                 # Convert multiline string to array of strings
                 try {
-                    $Services = (($TestAccess.ScriptOutput).Trim()).Split("`n")
+                    $Services = (($CollectedServices.ScriptOutput).Trim()).Split("`n")
                     foreach ($Service in $Services) {
                         $Configuration.Services += New-Object PSObject `
                             -Property @{ VM = $VM.Name; ServiceName = $Service.Trim() }
@@ -559,10 +559,10 @@ $ShutdownWorker = {
                     $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on $($VM.Name)." +
                     ' Retrying.'
                     Write-Information $msg
-                    $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
-                        -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+                    $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText `
+                        $ScriptText -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
-                    if ($TestAccess.ScriptOutput -like 'WARNING: Access denied*') {
+                    if ($CollectedServices.ScriptOutput -like 'WARNING: Access denied*') {
                         $ErrorMessage = "$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for " +
                         "$($VMcreds.Username) do not work on $($VM.Name). If this is a one-off error, please " +
                         'correct the credentials on the server. If this error repeats often, update the ' +
@@ -572,7 +572,7 @@ $ShutdownWorker = {
                     } else {
                         # Convert multiline string to array of strings
                         try {
-                            $Services = (($TestAccess.ScriptOutput).Trim()).Split("`n")
+                            $Services = (($CollectedServices.ScriptOutput).Trim()).Split("`n")
                             foreach ($Service in $Services) {
                                 $Configuration.Services += New-Object PSObject `
                                     -Property @{ VM = $VM.Name; ServiceName = $Service.Trim() }
@@ -806,15 +806,15 @@ $BootWorker = {
             $msg = "$(Get-Date -Format G): Checking Automatic and Running services on $($VM.Name). Excluding " +
             "($ServiceList) from check as these services were not running during shutdown."
             Write-Information $msg
-            $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
+            $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
-            while ($TestAccess.ScriptOutput -like 'WARNING: Access denied*') {
+            while ($ServicesCheck.ScriptOutput -like 'WARNING: Access denied*') {
                 Write-Warning "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again."
                 Start-Sleep -Seconds 60
 
                 # Run script to check services.
-                $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
+                $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                     -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
             }
 
