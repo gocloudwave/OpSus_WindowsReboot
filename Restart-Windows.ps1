@@ -775,8 +775,8 @@ $BootWorker = {
         # running.
         $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
         if ($null -eq $ServerServices) {
-            $msg = "No services were Automatic and not Running during shutdown on $($VM.Name). Verify all " +
-            'Automatic services are running on the server.'
+            $msg = "$(Get-Date -Format G): No services were Automatic and not Running during shutdown on " +
+            "$($VM.Name). Verify all Automatic services are running on the server."
             Write-Host $msg -BackgroundColor DarkGray
             $ServiceList = 'N/A'
             $ScriptText = 'try { while (Get-Service  | Where-Object { $_.StartType -eq ' +
@@ -806,7 +806,7 @@ $BootWorker = {
             # Run script to check services.
             $msg = "$(Get-Date -Format G): Checking Automatic and Running services on $($VM.Name). Excluding " +
             "($ServiceList) from check as these services were not running during shutdown."
-            Write-Information $msg
+            Write-Host $msg -BackgroundColor Green
             $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
