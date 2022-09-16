@@ -631,8 +631,11 @@ $ShutdownWorker = {
                 try {
                     $Services = (($CollectedServices.ScriptOutput).Trim()).Split("`n")
                     foreach ($Service in $Services) {
-                        $Configuration.Services += New-Object PSObject `
-                            -Property @{ VM = $VM.Name; ServiceName = $Service.Trim() }
+                        if ($Service.Trim()) {
+                            <# Do no output if service list is empty #>
+                            $Configuration.Services += New-Object PSObject `
+                                -Property @{ VM = $VM.Name; ServiceName = $Service.Trim() }
+                        }
                     }
                     Write-Host "$(Get-Date -Format G): Collected services for $($VM.Name)."
                 } catch [System.Management.Automation.RuntimeException] {
