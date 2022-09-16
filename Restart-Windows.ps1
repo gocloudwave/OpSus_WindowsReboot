@@ -606,9 +606,11 @@ $ShutdownWorker = {
 
     begin {
         $Error.Clear()
-        $ScriptText = 'try { Get-Service -ErrorAction Stop | Where-Object { $_.StartType -eq "Automatic" -and ' +
-        '$_.Status -ne "Running" } | Format-Table -Property Name -HideTableHeaders } catch { Write-Warning ' +
-        '"Access denied" }'
+        $ExcludedSvcsList = "'$($($Configuration.ExcludedServices) -join "','")'"
+
+        $ScriptText = "try { Get-Service -Exclude $ExcludedSvcsList -ErrorAction Stop | Where-Object { " +
+        '$_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property Name ' +
+        '-HideTableHeaders } catch { Write-Warning "Access denied" }'
     }
 
     process {
