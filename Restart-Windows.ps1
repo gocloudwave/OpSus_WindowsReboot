@@ -65,12 +65,16 @@ $Configuration.ExcludedServices = @(
     '3M.SUA.Agent',
     'AdobeARMservice',
     'AeLookupSvc',
+    'AmazonSSMAgent',
     'AudioSrv',
+    'AWSLiteAgent',
+    'BASupportExpressStandaloneService',
     'BFE',
     'BITS',
     'bomgar-*',
     'Browser',
     'CcmExec',
+    'CDPSvc',
     'CDPUser*',
     'CmRcService',
     'DcomLaunch',
@@ -90,6 +94,7 @@ $Configuration.ExcludedServices = @(
     'KtmRm',
     'LanmanServer',
     'LanmanWorkstation',
+    'MapsBroker',
     'MHealthAgent',
     'MpsSvc',
     'MSDTC',
@@ -608,7 +613,7 @@ $ShutdownWorker = {
 
     process {
         try {
-            Write-Host "Attempting service collection on $($VM.Name)."
+            Write-Host "$(Get-Date -Format G): INFO: Attempting service collection on $($VM.Name)."
             $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
@@ -631,7 +636,7 @@ $ShutdownWorker = {
                 } catch [System.Management.Automation.RuntimeException] {
                     $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on $($VM.Name)." +
                     ' Retrying.'
-                    Write-Host $msg -BackgroundColor DarkGray
+                    Write-Host $msg -BackgroundColor Black -ForegroundColor Yellow
                     $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText `
                         $ScriptText -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
@@ -654,9 +659,9 @@ $ShutdownWorker = {
                         } catch [System.Management.Automation.RuntimeException] {
                             $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on " +
                             "$($VM.Name). This is the second time all Automatic services were running. " +
-                            'Script will require *all* Automatic services to run on boot for this server.'
+                            'Script will only excluded the Excluded Services list from boot check.'
                             $Configuration.ScriptErrors += $msg
-                            Write-Host $msg -BackgroundColor DarkGray
+                            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
                         }
                     }
                 }
@@ -870,13 +875,13 @@ $BootWorker = {
             # Run script to check services.
             $msg = "$(Get-Date -Format G): Checking Automatic and Running services on $($VM.Name). Excluding " +
             "($ServiceList) from check as these services were not running during shutdown."
-            Write-Host $msg -BackgroundColor Green
+            Write-Host $msg -BackgroundColor DarkGreen -ForegroundColor Green
             $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
 
             while ($ServicesCheck.ScriptOutput -like 'WARNING: Access denied*') {
                 Write-Host "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again." `
-                    -BackgroundColor DarkYellow
+                    -BackgroundColor Yellow -ForegroundColor DarkRed
                 Start-Sleep -Seconds 60
 
                 # Run script to check services.
@@ -959,7 +964,8 @@ foreach ($group in $BootGroups) {
             try {
                 $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
             } catch {
-                Write-Host "$(Get-Date -Format G): Unable to start $($VM.Name)." -BackgroundColor DarkYellow
+                Write-Host "$(Get-Date -Format G): Unable to start $($VM.Name)." -BackgroundColor Red `
+                    -ForegroundColor Yellow
                 $Configuration.ScriptErrors += "$(Get-Date -Format G): WARNING: Unable to start $($VM.Name)."
             }
 
@@ -982,7 +988,7 @@ foreach ($group in $BootGroups) {
             $VMIdx++
         } else {
             Write-Host "$(Get-Date -Format G): Skipping $($VM.Name) because it failed during shutdown phase." `
-                -BackgroundColor DarkRed
+                -BackgroundColor DarkRed -ForegroundColor Yellow
         }
     }
 
