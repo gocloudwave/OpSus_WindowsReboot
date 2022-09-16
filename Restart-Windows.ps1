@@ -54,6 +54,85 @@ $Selection = @{
     'Continue'  = 11
 }
 
+# Create synchronized hashtable
+$Configuration = [hashtable]::Synchronized(@{})
+$Configuration.Services = @()
+$Configuration.ScriptErrors = @()
+$Configuration.Shutdown = @{}
+$Configuration.VIServer = $null
+$Configuration.CredsTest = @{}
+$Configuration.ExcludedServices = @(
+    '3M.SUA.Agent',
+    'AdobeARMservice',
+    'AeLookupSvc',
+    'AudioSrv',
+    'BFE',
+    'BITS',
+    'bomgar-*',
+    'Browser',
+    'CcmExec',
+    'CDPUser*',
+    'CmRcService',
+    'DcomLaunch',
+    'Dhcp',
+    'DiagTrack',
+    'Dnscache',
+    'DPS',
+    'EFS',
+    'EventSystem',
+    'FDResPub',
+    'FontCache',
+    'gupdate',
+    'ietsms',
+    'IKEEXT',
+    'IPBusEnum',
+    'iphlpsvc',
+    'KtmRm',
+    'LanmanServer',
+    'LanmanWorkstation',
+    'MHealthAgent',
+    'MpsSvc',
+    'MSDTC',
+    'MSiSCSI',
+    'msiserver',
+    'Netlogon',
+    'NlaSvc',
+    'nsi',
+    'OneSync*',
+    'PlugPlay',
+    'PolicyAgent',
+    'Power',
+    'ProfSvc',
+    'ProtectedStorage',
+    'RemoteRegistry',
+    'RpcEptMapper',
+    'RpcLocator',
+    'RpcSs',
+    'SamSs',
+    'seclogon',
+    'SENS',
+    'ShellHWDetection',
+    'SNMPTRAP',
+    'sppsvc',
+    'stisvc',
+    'TermService',
+    'Themes',
+    'tiledatamodelsvc',
+    'TrkWks',
+    'TrustedInstaller',
+    'UALSVC',
+    'UxSms',
+    'VGAuthService',
+    'WbioSrvc',
+    'Wcmsvc',
+    'WerSvc',
+    'WinDefend',
+    'Winmgmt',
+    'wmiApSrv',
+    'WSearch',
+    'wuauserv'
+)
+
 $ButtonClicked = $null
 $ADCreds = $null
 $LMCreds = $null
@@ -153,13 +232,6 @@ $ScriptErrors = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUnive
 $ADTssTemplateId = $Settings.SecretTemplateLookup.ActiveDirectoryAccount
 $LMTssTemplateId = $Settings.SecretTemplateLookup.LocalUserWindowsAccount
 $TssUsername = "$($Settings.TssDomain)\$($Settings.TssUser)"
-# Create synchronized hashtable
-$Configuration = [hashtable]::Synchronized(@{})
-$Configuration.Services = @()
-$Configuration.ScriptErrors = @()
-$Configuration.Shutdown = @{}
-$Configuration.VIServer = $null
-$Configuration.CredsTest = @{}
 
 # Base path to Secret Server
 $ssUri = $Settings.ssUri
@@ -774,20 +846,12 @@ $BootWorker = {
         # Get service status for all services in ServicesList and use while loop to wait until all services are
         # running.
         $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
-        if ($null -eq $ServerServices) {
-            $msg = "$(Get-Date -Format G): No services were Automatic and not Running during shutdown on " +
-            "$($VM.Name). Verify all Automatic services are running on the server."
-            Write-Host $msg -BackgroundColor DarkGray
-            $ServiceList = 'N/A'
-            $ScriptText = 'try { while (Get-Service  | Where-Object { $_.StartType -eq ' +
-            '"Automatic" -and $_.Status -ne "Running" } | Format-Table -Property Name -HideTableHeaders) ' +
-            '{ Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }'
-        } else {
-            $ServiceList = "'$($ServerServices -join "','")'"
-            $ScriptText = '$Services = ' + "$ServiceList; try { while (Get-Service -Exclude " + '$Services | ' +
-            'Where-Object { $_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property' +
-            ' Name -HideTableHeaders ) { Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }'
-        }
+        $ServerServices += $Configuration.ExcludedServices
+
+        $ServiceList = "'$($ServerServices -join "','")'"
+        $ScriptText = '$Services = ' + "$ServiceList; try { while (Get-Service -Exclude " + '$Services | ' +
+        'Where-Object { $_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property' +
+        ' Name -HideTableHeaders ) { Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }'
 
         # Wait 60 seconds so VM has time to obtain DNS HostName
         Start-Sleep -Seconds 60
