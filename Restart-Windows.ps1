@@ -661,7 +661,7 @@ $ShutdownWorker = {
                         } catch [System.Management.Automation.RuntimeException] {
                             $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on " +
                             "$($VM.Name). This is the second time all Automatic services were running. " +
-                            'Script will only excluded the Excluded Services list from boot check.'
+                            'Script will only exclude the Excluded Services list from boot check.'
                             $Configuration.ScriptErrors += $msg
                             Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
                         }
@@ -852,8 +852,10 @@ $BootWorker = {
         # Run two Powershell commands with one Invoke-VMScript.
         # Get service status for all services in ServicesList and use while loop to wait until all services are
         # running.
-        $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
-        $ServerServices += $Configuration.ExcludedServices
+        $ServerServices = $Configuration.ExcludedServices
+        if ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }) {
+            $ServerServices += ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
+        }
 
         $ServiceList = "'$($ServerServices -join "','")'"
         $ScriptText = '$Services = ' + "$ServiceList; try { while (Get-Service -Exclude " + '$Services | ' +
