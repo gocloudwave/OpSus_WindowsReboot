@@ -812,23 +812,29 @@ $BootWorker = {
             }
 
             # Run script to check services.
-            $msg = "$(Get-Date -Format G): Checking the following Automatic and Running services on " + `
-                "$($VM.Name): ($ServiceList)"
-            Write-Host $msg -BackgroundColor DarkGreen -ForegroundColor Green
-            $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
-                -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
-
-            while ($ServicesCheck.ScriptOutput -like 'WARNING: Access denied*') {
-                Write-Host "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again." `
-                    -BackgroundColor Yellow -ForegroundColor DarkRed
-                Start-Sleep -Seconds 60
-
-                # Run script to check services.
+            if ($ServerServices) {
+                $msg = "$(Get-Date -Format G): Checking the following Automatic and Running services on " + `
+                    "$($VM.Name): ($ServiceList)"
+                Write-Host $msg -BackgroundColor DarkGreen -ForegroundColor Green
                 $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                     -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
-            }
 
-            Write-Host "$(Get-Date -Format G): Finished checking services on $($VM.Name)."
+                while ($ServicesCheck.ScriptOutput -like 'WARNING: Access denied*') {
+                    Write-Host "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again." `
+                        -BackgroundColor Yellow -ForegroundColor DarkRed
+                    Start-Sleep -Seconds 60
+
+                    # Run script to check services.
+                    $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
+                        -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+                }
+
+                Write-Host "$(Get-Date -Format G): Finished checking services on $($VM.Name)."
+            } else {
+                $msg = "$(Get-Date -Format G): $($VM.Name) had no services matching the whitelist during " +
+                'shutdown. Script will only check that the server is powered on before continuing.'
+                Write-Host $msg -BackgroundColor DarkGreen -ForegroundColor Green
+            }
 
         } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
             $ErrorMessage = "$(Get-Date -Format G): BOOT WARNING: The credentials for $($VMcreds.Username) do " +
