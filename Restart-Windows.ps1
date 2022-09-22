@@ -925,7 +925,7 @@ foreach ($group in $BootGroups) {
 
             $null = $Jobs.Add($JobObj)
             $RSPercentComplete = ($VMIdx / $VMCount).ToString('P')
-            $Activity = "Runspace creation for bootup: Processing $service on $VM, Group $group"
+            $Activity = "Runspace creation for bootup: Processing $VM, Group $group"
             $Status = "$VMIdx/$VMCount : $RSPercentComplete Complete"
             $CleanPercent = $RSPercentComplete.Replace('%', '')
             Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete $CleanPercent
