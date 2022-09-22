@@ -61,82 +61,7 @@ $Configuration.ScriptErrors = @()
 $Configuration.Shutdown = @{}
 $Configuration.VIServer = $null
 $Configuration.CredsTest = @{}
-$Configuration.ExcludedServices = @(
-    '3M.SUA.Agent',
-    'AdobeARMservice',
-    'AeLookupSvc',
-    'AmazonSSMAgent',
-    'AudioSrv',
-    'AWSLiteAgent',
-    'BASupportExpressStandaloneService',
-    'BFE',
-    'BITS',
-    'bomgar-*',
-    'Browser',
-    'CcmExec',
-    'CDPSvc',
-    'CDPUser*',
-    'CmRcService',
-    'DcomLaunch',
-    'Dhcp',
-    'DiagTrack',
-    'Dnscache',
-    'DPS',
-    'EFS',
-    'EventSystem',
-    'FDResPub',
-    'FontCache',
-    'gupdate',
-    'ietsms',
-    'IKEEXT',
-    'IPBusEnum',
-    'iphlpsvc',
-    'KtmRm',
-    'LanmanServer',
-    'LanmanWorkstation',
-    'MapsBroker',
-    'MHealthAgent',
-    'MpsSvc',
-    'MSDTC',
-    'MSiSCSI',
-    'msiserver',
-    'Netlogon',
-    'NlaSvc',
-    'nsi',
-    'OneSync*',
-    'PlugPlay',
-    'PolicyAgent',
-    'Power',
-    'ProfSvc',
-    'ProtectedStorage',
-    'RemoteRegistry',
-    'RpcEptMapper',
-    'RpcLocator',
-    'RpcSs',
-    'SamSs',
-    'seclogon',
-    'SENS',
-    'ShellHWDetection',
-    'SNMPTRAP',
-    'sppsvc',
-    'stisvc',
-    'TermService',
-    'Themes',
-    'tiledatamodelsvc',
-    'TrkWks',
-    'TrustedInstaller',
-    'UALSVC',
-    'UxSms',
-    'VGAuthService',
-    'WbioSrvc',
-    'Wcmsvc',
-    'WerSvc',
-    'WinDefend',
-    'Winmgmt',
-    'wmiApSrv',
-    'WSearch',
-    'wuauserv'
-)
+$Configuration.SvcWhitelist = $Settings.SvcWhitelist
 
 $ButtonClicked = $null
 $ADCreds = $null
@@ -613,10 +538,10 @@ $ShutdownWorker = {
     begin {
         $ErrorActionPreference = 'Stop'
         $Error.Clear()
-        $ExcludedSvcsList = "'$($($Configuration.ExcludedServices) -join "','")'"
+        $SvcWhitelist = "'$($($Configuration.SvcWhitelist) -join "','")'"
 
-        $ScriptText = "try { Get-Service -Exclude $ExcludedSvcsList -ErrorAction Stop | Where-Object { " +
-        '$_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property Name ' +
+        $ScriptText = "try { Get-Service -Include $SvcWhitelist -ErrorAction Stop | Where-Object { " +
+        '$_.StartType -eq "Automatic" -and $_.Status -eq "Running" } | Format-Table -Property Name ' +
         '-HideTableHeaders } catch { Write-Warning "Access denied" }'
     }
 
@@ -863,13 +788,12 @@ $BootWorker = {
         # Run two Powershell commands with one Invoke-VMScript.
         # Get service status for all services in ServicesList and use while loop to wait until all services are
         # running.
-        $ServerServices = $Configuration.ExcludedServices
         if ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }) {
-            $ServerServices += ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
+            $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
         }
 
         $ServiceList = "'$($ServerServices -join "','")'"
-        $ScriptText = '$Services = ' + "$ServiceList; try { while (Get-Service -Exclude " + '$Services | ' +
+        $ScriptText = '$Services = ' + "$ServiceList; try { while (Get-Service -Include " + '$Services | ' +
         'Where-Object { $_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property' +
         ' Name -HideTableHeaders ) { Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }'
 
@@ -888,8 +812,8 @@ $BootWorker = {
             }
 
             # Run script to check services.
-            $msg = "$(Get-Date -Format G): Checking Automatic and Running services on $($VM.Name). Excluding " +
-            "($ServiceList) from check as these services were not running during shutdown."
+            $msg = "$(Get-Date -Format G): Checking the following Automatic and Running services on " + `
+                "$($VM.Name): ($ServiceList)"
             Write-Host $msg -BackgroundColor DarkGreen -ForegroundColor Green
             $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
                 -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
