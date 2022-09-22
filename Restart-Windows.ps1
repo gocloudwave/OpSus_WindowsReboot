@@ -61,7 +61,6 @@ $Configuration.ScriptErrors = @()
 $Configuration.Shutdown = @{}
 $Configuration.VIServer = $null
 $Configuration.CredsTest = @{}
-$Configuration.SvcWhitelist = $Settings.SvcWhitelist
 
 $ButtonClicked = $null
 $ADCreds = $null
@@ -86,6 +85,7 @@ if ($OpenFileDialog.ShowDialog() -eq 'Cancel') {
 }
 
 $Settings = Get-Content "$($OpenFileDialog.filename)" -Raw | ConvertFrom-Json
+$Configuration.SvcWhitelist = $Settings.SvcWhitelist
 
 # Display settings details and ask user to confirm continuation of script
 if ($Settings.vCenterRP) {
