@@ -519,6 +519,12 @@ $VMindex = 1
 
 foreach ($VM in $VMTestGroup) {
     <# $VM is the current item #>
+    if ($VM.Guest.HostName -notlike '*.*') {
+        $Creds = $LMCreds
+    } else {
+        $Creds = $ADCreds
+    }
+
     $PowerShell = [powershell]::Create()
     $PowerShell.RunspacePool = $RunspacePool
     $null = $PowerShell.AddScript($TestCredentials).AddArgument($VM).AddArgument($Creds).AddArgument($Configuration)
@@ -605,6 +611,7 @@ $ShutdownWorker = {
     )
 
     begin {
+        $ErrorActionPreference = 'Stop'
         $Error.Clear()
         $ExcludedSvcsList = "'$($($Configuration.ExcludedServices) -join "','")'"
 
@@ -851,6 +858,7 @@ $BootWorker = {
     )
 
     begin {
+        $ErrorActionPreference = 'Stop'
         $Error.Clear()
         # Run two Powershell commands with one Invoke-VMScript.
         # Get service status for all services in ServicesList and use while loop to wait until all services are
