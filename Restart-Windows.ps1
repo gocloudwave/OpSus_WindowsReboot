@@ -421,8 +421,8 @@ $TestCredentials = {
 
 }
 
-$VMTestGroup = $VMTable | Where-Object { $_.Guest.HostName -notlike '*.*' }
-$VMTestGroup += $VMTable | Where-Object { $_.Guest.HostName -like '*.*' } | Get-Random
+$VMTestGroup = $VMs | Where-Object { $_.Guest.HostName -notlike '*.*' }
+$VMTestGroup += $VMs | Where-Object { $_.Guest.HostName -like '*.*' } | Get-Random
 $VMTestCount = $VMTestGroup.Count
 
 # Process no more than 25% of the list at once. (Minimum value = 20)
