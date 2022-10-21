@@ -69,7 +69,8 @@ VMware._
 
 3. Create a CSV file listing the VM Names to process and the order for processing. The file must have at least two
    columns (Name and BootGroup) with a header row. The file may contain an additional column (ShutdownGroup) if the
-   shutdown order matters.
+   shutdown order matters. _NOTE: Default value for BootGroup and ShutdownGroup is 1 if NULL; default value for
+   Process is FALSE if NULL._
 
    **Example 1**
 
