@@ -741,6 +741,9 @@ foreach ($group in $ShutdownGroups) {
 
     Write-Progress -Id 2 -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
+    $ShutdownList = $Configuration.Shutdown.keys | Where-Object { $GroupMembers.Name -eq $_ }
+    $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
+
     while ($VMGroup.PowerState -contains 'PoweredOn') {
         $VMsShutdown = ($VMGroup.PowerState -eq 'PoweredOff').Count
         $PercentComplete = ($VMsShutdown / $VMCount).ToString('P')
@@ -748,7 +751,7 @@ foreach ($group in $ShutdownGroups) {
         Write-Progress -Id 2 -Activity 'Shutdown' -Status $Status `
             -PercentComplete $PercentComplete.Replace('%', '')
         Start-Sleep -Milliseconds 1000
-        $VMGroup = Get-VM -Name $GroupMembers.Name -Server $Configuration.VIServer
+        $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
     }
 
     Write-Progress -Id 2 -Activity 'Shutdown' -Completed
