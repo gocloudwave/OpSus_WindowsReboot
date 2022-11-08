@@ -729,7 +729,7 @@ foreach ($group in $ShutdownGroups) {
         $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
         $PercentComplete = ($CompletedJobs / $TotalJobs).ToString('P')
         $Status = "Shutting down. $CompletedJobs/$TotalJobs : $PercentComplete Complete"
-        Write-Progress -Id 2 -Activity "Processing shutdown; Group $group" -Status $Status `
+        Write-Progress -Id 2 -Activity "Processing service collection and shutdown; Group $group" -Status $Status `
             -PercentComplete $PercentComplete.Replace('%', '')
         Start-Sleep -Milliseconds 100
     }
@@ -742,7 +742,7 @@ foreach ($group in $ShutdownGroups) {
     Write-Progress -Id 2 -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
     while ($VMGroup.PowerState -contains 'PoweredOn') {
-        $VMsShutdown = ($VMs.PowerState -eq 'PoweredOff').Count
+        $VMsShutdown = ($VMGroup.PowerState -eq 'PoweredOff').Count
         $PercentComplete = ($VMsShutdown / $VMCount).ToString('P')
         $Status = "Waiting for shutdown. $VMsShutdown/$VMCount : $PercentComplete Complete"
         Write-Progress -Id 2 -Activity 'Shutdown' -Status $Status `
