@@ -292,9 +292,8 @@ while (($null -eq $Session) -and ($ButtonClicked -ne $Selection.Cancel)) {
 
 if ($ButtonClicked -eq $Selection.Cancel) {
     if ($Session) { $null = Close-TssSession -TssSession $Session }
-    $Title = 'User canceled Thycotic login.'
-    $ADCreds = Get-Credential -Message 'Please enter Domain Admin credentials.' -Title $Title
-    $LMCreds = Get-Credential -Message 'Please enter Local Machine Admin credentials.' -Title $Title
+    $ADCreds = Get-Credential -Message 'Please enter Domain Admin credentials.'
+    $LMCreds = Get-Credential -Message 'Please enter Local Machine Admin credentials.'
 } else {
     try {
         $TssFolders = Search-TssFolders -TssSession $Session -TopLevelOnly $true -SearchText $Settings.TssFolder `
