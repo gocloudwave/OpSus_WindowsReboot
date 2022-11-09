@@ -740,7 +740,8 @@ foreach ($group in $ShutdownGroups) {
 
     Write-Progress -Id 2 -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
-    $ShutdownList = $Configuration.Shutdown.keys | Where-Object { $GroupMembers.Name -eq $_ }
+    $ShutdownList = ($Configuration.Shutdown.GetEnumerator() | Where-Object { $_.Value -eq 'True' }).key | `
+        Where-Object { $GroupMembers.Name -eq $_ }
     $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
 
     while ($VMGroup.PowerState -contains 'PoweredOn') {
