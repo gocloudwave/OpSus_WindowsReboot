@@ -743,6 +743,7 @@ foreach ($group in $ShutdownGroups) {
     $ShutdownList = ($Configuration.Shutdown.GetEnumerator() | Where-Object { $_.Value -eq 'True' }).key | `
         Where-Object { $GroupMembers.Name -eq $_ }
     $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
+    $GroupCount = $VMGroup.Count
 
     while ($VMGroup.PowerState -contains 'PoweredOn') {
         $VMsShutdown = ($VMGroup.PowerState -eq 'PoweredOff').Count
