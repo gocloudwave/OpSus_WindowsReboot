@@ -618,10 +618,12 @@ $ShutdownWorker = {
             $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for $($VMcreds.Username) " +
                 "do not work on $($VM.Name). If this is a one-off error, please correct the credentials on the " +
                 'server. If this error repeats often, then update the credentials in Thycotic.')
+            Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
             $Configuration.ScriptErrors += $ErrorMessage
             $Configuration.Shutdown[$VM.Name] = $false
         } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidArgument] {
             $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Invalid argument processing $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
             $Configuration.ScriptErrors += $msg
             $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
             $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
@@ -633,6 +635,7 @@ $ShutdownWorker = {
         } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.ViServerConnectionException], `
             [System.InvalidOperationException] {
             $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Failure connecting to $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
             $Configuration.ScriptErrors += $msg
             $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
             $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
@@ -641,6 +644,7 @@ $ShutdownWorker = {
         } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException] {
             $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: Unable to process $($VM.Name). Check the " +
                 'VM to ensure it is working properly. Error message and attempted command below:')
+            Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
             $Configuration.ScriptErrors += $ErrorMessage
             $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
             $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
@@ -648,6 +652,7 @@ $ShutdownWorker = {
             $Configuration.Shutdown[$VM.Name] = $false
         } catch {
             $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Other error processing $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
             $Configuration.ScriptErrors += $msg
             $Configuration.ScriptErrors += $Error[0].Exception.GetType().FullName
             $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
@@ -849,9 +854,11 @@ $BootWorker = {
             $ErrorMessage = ("$(Get-Date -Format G): BOOT WARNING: The credentials for $($VMcreds.Username) do " +
                 "not work on $($VM.Name). If this is a one-off error, please correct the credentials on the " +
                 'server. If this error repeats often, then update the credentials in Thycotic.')
+            Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
             $Configuration.ScriptErrors += $ErrorMessage
         } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidArgument] {
             $msg = "$(Get-Date -Format G): BOOT WARNING: Invalid argument processing $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
             $Configuration.ScriptErrors += $msg
             $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
             $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
@@ -862,6 +869,7 @@ $BootWorker = {
         } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.ViServerConnectionException], `
             [System.InvalidOperationException] {
             $msg = "$(Get-Date -Format G): BOOT WARNING: Failure connecting to $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
             $Configuration.ScriptErrors += $msg
             $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
             $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
@@ -869,12 +877,14 @@ $BootWorker = {
         } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException] {
             $ErrorMessage = ("$(Get-Date -Format G): BOOT WARNING: Unable to process $($VM.Name). Check the VM " +
                 'to ensure it is working properly. Error message and attempted command below:')
+            Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
             $Configuration.ScriptErrors += $ErrorMessage
             $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
             $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
             $Configuration.ScriptErrors += $ErrorMessage
         } catch {
             $msg = "$(Get-Date -Format G): BOOT WARNING: Other error processing $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
             $Configuration.ScriptErrors += $msg
             $Configuration.ScriptErrors += $Error[0].Exception.GetType().FullName
             $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
