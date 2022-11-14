@@ -14,6 +14,7 @@ VMware._
   - [Definitions](#definitions)
     - [DNSDomain](#dnsdomain)
     - [InvalidCertAction](#invalidcertaction)
+    - [MinsBtwStages](#minsbtwstages)
     - [vCenter](#vcenter)
     - [vCenterRP](#vcenterrp)
     - [TssFolder](#tssfolder)
@@ -53,6 +54,7 @@ VMware._
    {
      "InvalidCertAction": "Ignore",
      "DNSDomain": "fabrikam.LOCAL",
+     "MinsBtwStages": 15,
      "vCenter": "vcenter.fabrikam.local",
      "vCenterRP": "VMwareResourcePool",
      "TssFolder": "ThycoticFolder",
@@ -68,9 +70,10 @@ VMware._
    ```
 
 3. Create a CSV file listing the VM Names, whether or not to process each, and the order for processing. The file
-   must have at least three columns (Name, Process, and BootGroup) with a header row. The file may contain an
-   additional column (ShutdownGroup) if the shutdown order matters. _NOTE: Default value for BootGroup and
-   ShutdownGroup is 1 if NULL; default value for Process is FALSE if NULL._
+   must have at least three columns (Name, Process, and BootGroup) with a header row. The file may contain up to
+   two additional columns (ShutdownGroup and Stage). The stage column allows a user to pause the reboot process
+   between stages. The shutdown column allows the user to specify a shutdown order within a stage. _NOTE: Default
+   value for BootGroup, ShutdownGroup, and Stage is 1 if NULL; default value for Process is FALSE if NULL._
 
    **Example 1**
 
@@ -85,11 +88,31 @@ VMware._
    **Example 2**
 
    ```csv
+   Name,Process,BootGroup,Stage
+   ServerA,TRUE,1,1
+   ServerB,FALSE,1,2
+   ServerC,TRUE,2,1
+   ServerD,TRUE,3,1
+   ```
+
+   **Example 3**
+
+   ```csv
    Name,Process,BootGroup,ShutdownGroup
    ServerA,FALSE,1,3
    ServerB,TRUE,1,3
    ServerC,FALSE,2,2
    ServerD,TRUE,3,1
+   ```
+
+   **Example 4**
+
+   ```csv
+   Name,Process,BootGroup,ShutdownGroup,Stage
+   ServerA,FALSE,1,3,1
+   ServerB,TRUE,1,3,2
+   ServerC,FALSE,2,2,1
+   ServerD,TRUE,3,1,1
    ```
 
 ## Definitions
@@ -103,6 +126,10 @@ server.
 
 Define the action to take when an attempted connection to a server fails due to a certificate error. For more
 information about invalid certificates, run `Get-Help about_invalid_certificates`.
+
+### MinsBtwStages
+
+How many minutes should the script wait after completing one stage before beginning the next stage.
 
 ### vCenter
 
