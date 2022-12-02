@@ -342,7 +342,7 @@ if ($ButtonClicked -eq $Selection.Cancel) {
     $LMCreds = Get-Credential -Message 'Please enter Local Machine Admin credentials.'
 } else {
     try {
-        $TssFolders = Search-TssFolders -TssSession $Session -TopLevelOnly $true -SearchText $Settings.TssFolder `
+        $TssFolders = Search-TssFolders -TssSession $Session -TopLevelOnly $false -SearchText $Settings.TssFolder `
             -ErrorAction $ErrorActionPreference
     } catch {
         # Unable to find the folder specified in settings.json. Listing all top level folders.
