@@ -469,7 +469,14 @@ $TestCredentials = {
 }
 
 $VMTestGroup = $VMs | Where-Object { $_.Guest.HostName -notlike '*.*' }
-$VMTestGroup += $VMs | Where-Object { $_.Guest.HostName -like '*.*' } | Get-Random
+if ($VMTestGroup) {
+    <# Action to perform if the condition is true #>
+    $VMTestGroup += $VMs | Where-Object { $_.Guest.HostName -like '*.*' } | Get-Random
+
+} else {
+    <# Action when all if and elseif conditions are false #>
+    $VMTestGroup = $VMs | Where-Object { $_.Guest.HostName -like '*.*' } | Get-Random
+}
 $VMTestCount = $VMTestGroup.Count
 
 # Process no more than 25% of the list at once. (Minimum value = 20)
