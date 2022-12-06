@@ -580,7 +580,6 @@ foreach ($Stage in $Stages) {
     $BootGroups = $StageTable.BootGroup | Sort-Object -Unique -CaseSensitive
     $ShutdownGroups = $StageTable.ShutdownGroup | Sort-Object -Unique -CaseSensitive
 
-
     # Script block to parallelize collecting VM data and shutting down the VM
     $ShutdownWorker = {
         [CmdletBinding()]
@@ -838,7 +837,6 @@ foreach ($Stage in $Stages) {
 
     Write-Host "$(Get-Date -Format G): Services list saved to $ScriptOutput"
 
-
     # Script block to parallelize booting VMs
     $BootWorker = {
         [CmdletBinding()]
@@ -1046,9 +1044,6 @@ foreach ($Stage in $Stages) {
         Write-Progress -Id 2 -Activity 'Booting machines' -Completed
     }
 
-    #Increment the stage count
-    $StageIdx++
-
     Write-Host "Completed stage $Stage."
 
     # Do not wait after the final stage
@@ -1056,6 +1051,8 @@ foreach ($Stage in $Stages) {
         Wait-Stage -Action 'Time' -Message "Waiting $($Settings.MinsBtwStages) minutes before starting next stage."
     }
 
+    #Increment the stage count
+    $StageIdx++
 }
 # Disconnect from vCenter
 Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
