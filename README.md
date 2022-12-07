@@ -137,7 +137,7 @@ vCenter to connect to.
 
 ### vCenterRP
 
-Set this to the name of the Resource Pool that contains the machines you which to restart.
+Set this to the name of the Resource Pool that contains the machines you wish to restart.
 
 ### TssFolder
 
