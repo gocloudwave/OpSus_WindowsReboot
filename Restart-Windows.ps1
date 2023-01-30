@@ -89,9 +89,9 @@ $Settings = Get-Content "$($OpenFileDialog.filename)" -Raw | ConvertFrom-Json
 $Configuration.SvcWhitelist = $Settings.SvcWhitelist
 
 # Display settings details and ask user to confirm continuation of script
-if ($Settings.vCenterRP) {
+if ($Settings.TssFolder) {
     $wshell = New-Object -ComObject Wscript.Shell
-    $ButtonClicked = $wshell.Popup("Do you want to process customer $($Settings.vCenterRP) using Thycotic folder " +
+    $ButtonClicked = $wshell.Popup('Do you want to process the customer in Thycotic folder ' +
         "$($Settings.TssFolder)?", 0, 'Confirm customer', $Buttons.YesNo + $Icon.Question)
 }
 
@@ -393,17 +393,17 @@ if ($ButtonClicked -eq $Selection.Cancel) {
 
     # Obtain Domain Admin credentials
     if ($null -eq $ADSecretName) {
-        $ADCreds = Get-UserCredentials -Type 'AD Administrator' -Customer $Settings.vCenterRP
+        $ADCreds = Get-UserCredentials -Type 'AD Administrator' -Customer $Settings.TssFolder
     } else {
-        $ADCreds = Get-UserCredentials -Type 'AD Administrator' -Customer $Settings.vCenterRP -TssSession $Session `
+        $ADCreds = Get-UserCredentials -Type 'AD Administrator' -Customer $Settings.TssFolder -TssSession $Session `
             -TssFolder $TssFolder -TssRecords $ADSecrets -SecretName $ADSecretName
     }
 
     # Obtain Local Machine Admin credentials
     if ($null -eq $LMSecretName) {
-        $LMCreds = Get-UserCredentials -Type 'Local Machine' -Customer $Settings.vCenterRP
+        $LMCreds = Get-UserCredentials -Type 'Local Machine' -Customer $Settings.TssFolder
     } else {
-        $LMCreds = Get-UserCredentials -Type 'Local Machine' -Customer $Settings.vCenterRP -TssSession $Session `
+        $LMCreds = Get-UserCredentials -Type 'Local Machine' -Customer $Settings.TssFolder -TssSession $Session `
             -TssFolder $TssFolder -TssRecords $LMSecrets -SecretName $LMSecretName
     }
 
@@ -1062,5 +1062,6 @@ Remove-Item -Path $ScriptOutput -Force
 
 $wshell = New-Object -ComObject Wscript.Shell
 $elapsedMinutes = $stopwatch.Elapsed.TotalMinutes
-$null = $wshell.Popup("Operation Completed in $elapsedMinutes minutes", 0, 'Done', $Buttons.OK + $Icon.Information)
+$null = $wshell.Popup("Operation completed for $($Settings.TssFolder) in $elapsedMinutes minutes", 0, 'Done',
+    $Buttons.OK + $Icon.Information)
 #####END OF SCRIPT#######

@@ -16,7 +16,6 @@ VMware._
     - [InvalidCertAction](#invalidcertaction)
     - [MinsBtwStages](#minsbtwstages)
     - [vCenter](#vcenter)
-    - [vCenterRP](#vcenterrp)
     - [TssFolder](#tssfolder)
     - [TssDomain](#tssdomain)
     - [TssUser](#tssuser)
@@ -56,7 +55,6 @@ VMware._
      "DNSDomain": "fabrikam.LOCAL",
      "MinsBtwStages": 15,
      "vCenter": "vcenter.fabrikam.local",
-     "vCenterRP": "VMwareResourcePool",
      "TssFolder": "ThycoticFolder",
      "TssDomain": "ThycoticDomain",
      "TssUser": "ThycoticUser",
@@ -134,10 +132,6 @@ How many minutes should the script wait after completing one stage before beginn
 ### vCenter
 
 vCenter to connect to.
-
-### vCenterRP
-
-Set this to the name of the Resource Pool that contains the machines you wish to restart.
 
 ### TssFolder
 
