@@ -44,8 +44,9 @@ VMware._
 
 ## Requirements
 
-1. Run `Restart-Windows.ps1` from a server on the same domain that vCenter uses for authentication.
-2. Create `settings.json` file in script directory. **Note: You may use any name, but it must be a JSON file.**
+1. You must have .NET Framework version 4.7.2 or higher to run this script.
+2. Run `Restart-Windows.ps1` from a server on the same domain that vCenter uses for authentication.
+3. Create `settings.json` file in script directory. **Note: You may use any name, but it must be a JSON file.**
 
    **Example**
 
@@ -67,7 +68,7 @@ VMware._
    }
    ```
 
-3. Create a CSV file listing the VM Names, whether or not to process each, and the order for processing. The file
+4. Create a CSV file listing the VM Names, whether or not to process each, and the order for processing. The file
    must have at least three columns (Name, Process, and BootGroup) with a header row. The file may contain up to
    two additional columns (ShutdownGroup and Stage). The stage column allows a user to pause the reboot process
    between stages. The shutdown column allows the user to specify a shutdown order within a stage. _NOTE: Default
@@ -163,8 +164,12 @@ set to Automatic, and is Running, then the script will ensure the same state upo
 1. Place `Get-UserCredentials.ps1`, `Get-VMToolsStatus.ps1`, `Install-PowerCLI.ps1`, `Restart-Windows.ps1`,
    `Search-TssFolders.ps1`, `settings.json`, and `User-Prompts.ps1` in a single folder on a machine that can
    connect to the vCenter server.
+   - If you downloaded the scripts from the Internet, you need to ensure that the files are unblocked. You can
+     them via the PowerShell command: `Get-ChildItem {PATH TO DOWNLOADED FILES} | Unblock-File`.
 2. Run `Restart-Windows.ps1`.
-   - If the script fails to configure PowerCLI, run `Install-PowerCLI.ps1` manually as an Administrator.
+   - If the script fails to configure PowerCLI, load `Install-PowerCLI.ps1` manually as an Administrator and
+     then call the function `Install-PowerCLI`.
+   - Loading a PowerShell script requires running the following command: `. .\Install-PowerCLI.ps1`.
 3. The script will prompt the user for the settings.json file location.
    - This is useful if you want to have a settings file for each customer.
 4. The script will prompt the user for a CSV file listing VM Names, BootGroup, and (optionally) ShutdownGroup.
