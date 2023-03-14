@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Buttons = @{
     'OK'                     = 0
     'OKCancel'               = 1
-    'AbortRetryIngnore'      = 2
+    'AbortRetryIgnore'       = 2
     'YesNoCancel'            = 3
     'YesNo'                  = 4
     'RetryCancel'            = 5
@@ -59,6 +59,7 @@ $Configuration = [hashtable]::Synchronized(@{})
 $Configuration.Services = @()
 $Configuration.ScriptErrors = @()
 $Configuration.Shutdown = @{}
+$Configuration.BootFailure = @{}
 $Configuration.VIServer = $null
 $Configuration.CredsTest = @{}
 
@@ -195,7 +196,7 @@ if ($Env:USERDNSDOMAIN -ne $Settings.DNSDomain) {
 # Install or update to latest PowerCLI version
 $PowerCLIPSModule = Get-Module -Name VMware.PowerCLI -ListAvailable
 $PowerCLIAllPrograms = Get-Package -ProviderName Programs -IncludeWindowsInstaller | `
-    Where-Object { $_.Name -eq 'VMware vSphere PowerCLI' }
+        Where-Object { $_.Name -eq 'VMware vSphere PowerCLI' }
 
 if ($null -eq $PowerCLIPSModule -or $PowerCLIAllPrograms) {
     # Call Install-PowerCLI
@@ -469,6 +470,299 @@ $TestCredentials = {
 
 }
 
+# Script block to parallelize collecting VM data and shutting down the VM
+$ShutdownWorker = {
+    [CmdletBinding()]
+    param (
+        # Name of the VM
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 0)]
+        [ValidateNotNullOrEmpty()]
+        [VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine]
+        $VM,
+
+        # Credentials to use for this VM
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 1)]
+        [ValidateNotNullOrEmpty()]
+        [System.Management.Automation.PSCredential]
+        $VMCreds,
+
+        # Hash table for configuration data
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 2)]
+        [ValidateNotNullOrEmpty()]
+        [hashtable]
+        $Configuration
+    )
+
+    begin {
+        $ErrorActionPreference = 'Stop'
+        $Error.Clear()
+        $SvcWhitelist = "'$($($Configuration.SvcWhitelist) -join "','")'"
+
+        $ScriptText = ("try { Get-Service -Include $SvcWhitelist -ErrorAction Stop | Where-Object { " +
+            '$_.StartType -eq "Automatic" -and $_.Status -eq "Running" } | Format-Table -Property Name ' +
+            '-HideTableHeaders } catch { Write-Warning "Access denied" }')
+    }
+
+    process {
+        try {
+            Write-Host "$(Get-Date -Format G): INFO: Attempting service collection on $($VM.Name)."
+            $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
+                -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+
+            if ($CollectedServices.ScriptOutput -like 'WARNING: Access denied*') {
+                $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for " +
+                    "$($VMcreds.Username) do not work on $($VM.Name). If this is a one-off error, please correct " +
+                    'the credentials on the server. If this error repeats often, update the credentials in ' +
+                    'Thycotic. Service collection failed.')
+                $Configuration.ScriptErrors += $ErrorMessage
+                $Configuration.Shutdown[$VM.Name] = $false
+            } else {
+                # Convert multiline string to array of strings
+                try {
+                    $Services = (($CollectedServices.ScriptOutput).Trim()).Split("`n")
+                    foreach ($Service in $Services) {
+                        if ($Service.Trim()) {
+                            <# Do no output if service list is empty #>
+                            $Configuration.Services += New-Object PSObject `
+                                -Property @{ VM = $VM.Name; ServiceName = $Service.Trim() }
+                        }
+                    }
+                    Write-Host "$(Get-Date -Format G): Collected services for $($VM.Name)."
+                } catch [System.Management.Automation.RuntimeException] {
+                    $msg = ("$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on $($VM.Name)." +
+                        ' Retrying.')
+                    Write-Host $msg -BackgroundColor Black -ForegroundColor Yellow
+                    $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText `
+                        $ScriptText -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+
+                    if ($CollectedServices.ScriptOutput -like 'WARNING: Access denied*') {
+                        $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for " +
+                            "$($VMcreds.Username) do not work on $($VM.Name). If this is a one-off error, please " +
+                            'correct the credentials on the server. If this error repeats often, update the ' +
+                            'credentials in Thycotic. Service collection failed.')
+                        $Configuration.ScriptErrors += $ErrorMessage
+                        $Configuration.Shutdown[$VM.Name] = $false
+                    } else {
+                        # Convert multiline string to array of strings
+                        try {
+                            $Services = (($CollectedServices.ScriptOutput).Trim()).Split("`n")
+                            foreach ($Service in $Services) {
+                                $Configuration.Services += New-Object PSObject `
+                                    -Property @{ VM = $VM.Name; ServiceName = $Service.Trim() }
+                            }
+                            Write-Host "$(Get-Date -Format G): Collected services for $($VM.Name)."
+                        } catch [System.Management.Automation.RuntimeException] {
+                            $msg = ("$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on " +
+                                "$($VM.Name). This is the second time all Automatic services were running. " +
+                                'Script will only exclude the Excluded Services list from boot check.')
+                            $Configuration.ScriptErrors += $msg
+                            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
+                        }
+                    }
+                }
+
+                if ($VM.ExtensionData.Guest.ToolsStatus -eq 'toolsOk') {
+                    Write-Host "$(Get-Date -Format G): Shutting down $($VM.Name)."
+                    $null = Stop-VMGuest -VM $VM -Server $Configuration.VIServer -Confirm:$false
+                } else {
+                    Write-Host "$(Get-Date -Format G): Stopping $($VM.Name)."
+                    $null = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
+                }
+                $Configuration.Shutdown[$VM.Name] = $true
+
+            }
+        } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
+            $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for $($VMcreds.Username) " +
+                "do not work on $($VM.Name). If this is a one-off error, please correct the credentials on the " +
+                'server. If this error repeats often, then update the credentials in Thycotic.')
+            Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
+            $Configuration.ScriptErrors += $ErrorMessage
+            $Configuration.Shutdown[$VM.Name] = $false
+        } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidArgument] {
+            $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Invalid argument processing $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
+            $Configuration.ScriptErrors += $msg
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $Configuration.ScriptErrors += $ErrorMessage
+            $ErrorMessage = ("Parameters: Server - $($Configuration.VIServer), VM - $($VM.Name), " +
+                "GuestCredential - $($VMcreds.Username)")
+            $Configuration.ScriptErrors += $ErrorMessage
+            $Configuration.Shutdown[$VM.Name] = $false
+        } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.ViServerConnectionException], `
+            [System.InvalidOperationException] {
+            $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Failure connecting to $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
+            $Configuration.ScriptErrors += $msg
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $Configuration.ScriptErrors += $ErrorMessage
+            $Configuration.Shutdown[$VM.Name] = $false
+        } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException] {
+            $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: Unable to process $($VM.Name). Check the " +
+                'VM to ensure it is working properly. Error message and attempted command below:')
+            Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
+            $Configuration.ScriptErrors += $ErrorMessage
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $Configuration.ScriptErrors += $ErrorMessage
+            $Configuration.Shutdown[$VM.Name] = $false
+        } catch {
+            $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Other error processing $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
+            $Configuration.ScriptErrors += $msg
+            $Configuration.ScriptErrors += $Error[0].Exception.GetType().FullName
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $Configuration.ScriptErrors += $ErrorMessage
+            $Configuration.Shutdown[$VM.Name] = $false
+        } finally {
+            $Error.Clear()
+        }
+    }
+}
+
+# Script block to parallelize booting VMs
+$BootWorker = {
+    [CmdletBinding()]
+    param (
+        # Name of the VM
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 0)]
+        [ValidateNotNullOrEmpty()]
+        [VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine]
+        $VM,
+
+        # Credentials to use for this VM
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 1)]
+        [ValidateNotNullOrEmpty()]
+        [System.Management.Automation.PSCredential]
+        $VMCreds,
+
+        # Hash table for configuration data
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 2)]
+        [ValidateNotNullOrEmpty()]
+        [hashtable]
+        $Configuration
+    )
+
+    begin {
+        $ErrorActionPreference = 'Stop'
+        $Error.Clear()
+        # Run two Powershell commands with one Invoke-VMScript.
+        # Get service status for all services in ServicesList and use while loop to wait until all services are
+        # running.
+        if ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }) {
+            $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
+        }
+
+        $ServiceList = "'$($ServerServices -join "','")'"
+        $ScriptText = ('$Services = ' + "$ServiceList; try { while (Get-Service -Include " + '$Services | ' +
+            'Where-Object { $_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property' +
+            ' Name -HideTableHeaders ) { Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }')
+
+        # Wait 60 seconds so VM has time to obtain DNS HostName
+        Start-Sleep -Seconds 60
+        $TimeoutCounter = [System.Diagnostics.Stopwatch]::StartNew()
+
+        # Function to check if $TimeoutCounter has exceeded the timeout value
+        function CheckTimeout {
+            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.Timeout) {
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.Timeout) " +
+                'minutes. Logging.'
+                throw [System.TimeoutException] $msg
+            }
+        }
+    }
+
+    process {
+        try {
+            # Wait for VM power state ON and DNS Name assignment
+            while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
+                CheckTimeout -ErrorAction $ErrorActionPreference
+                $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+                # Give the machine time before attempting login after boot up
+                Write-Host "$(Get-Date -Format G): $($VM.Name) does not have a DNS name yet. Waiting 30 seconds."
+                Start-Sleep -Seconds 30
+            }
+
+            # Run script to check services.
+            if ($ServerServices) {
+                $msg = "$(Get-Date -Format G): Checking the following Automatic and Running services on " + `
+                    "$($VM.Name): ($ServiceList)"
+                Write-Host $msg -BackgroundColor DarkGreen -ForegroundColor Green
+                $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
+                    -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+
+                while ($ServicesCheck.ScriptOutput -like 'WARNING: Access denied*') {
+                    CheckTimeout -ErrorAction $ErrorActionPreference
+                    Write-Host "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again." `
+                        -BackgroundColor Yellow -ForegroundColor DarkRed
+                    Start-Sleep -Seconds 60
+
+                    # Run script to check services.
+                    $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
+                        -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+                }
+
+                Write-Host "$(Get-Date -Format G): Finished checking services on $($VM.Name)."
+            } else {
+                $msg = ("$(Get-Date -Format G): $($VM.Name) had no services matching the whitelist during " +
+                    'shutdown. Script will only check that the server is powered on before continuing.')
+                Write-Host $msg -BackgroundColor DarkGreen -ForegroundColor Green
+            }
+
+        } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
+            $ErrorMessage = ("$(Get-Date -Format G): BOOT WARNING: The credentials for $($VMcreds.Username) do " +
+                "not work on $($VM.Name). If this is a one-off error, please correct the credentials on the " +
+                'server. If this error repeats often, then update the credentials in Thycotic.')
+            Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
+            $Configuration.ScriptErrors += $ErrorMessage
+        } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidArgument] {
+            $msg = "$(Get-Date -Format G): BOOT WARNING: Invalid argument processing $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
+            $Configuration.ScriptErrors += $msg
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $Configuration.ScriptErrors += $ErrorMessage
+            $ErrorMessage = ("Parameters: Server - $($Configuration.VIServer), VM - $($VM.Name), " +
+                "GuestCredential - $($VMcreds.Username)")
+            $Configuration.ScriptErrors += $ErrorMessage
+        } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.ViServerConnectionException], `
+            [System.InvalidOperationException] {
+            $msg = "$(Get-Date -Format G): BOOT WARNING: Failure connecting to $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
+            $Configuration.ScriptErrors += $msg
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $Configuration.ScriptErrors += $ErrorMessage
+        } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException] {
+            $ErrorMessage = ("$(Get-Date -Format G): BOOT WARNING: Unable to process $($VM.Name). Check the VM " +
+                'to ensure it is working properly. Error message and attempted command below:')
+            Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
+            $Configuration.ScriptErrors += $ErrorMessage
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $Configuration.ScriptErrors += $ErrorMessage
+        } catch [System.TimeoutException] {
+            Write-Host $Error[0].Exception.Message -BackgroundColor Red -ForegroundColor Yellow
+            $Configuration.ScriptErrors += $Error[0].Exception.Message
+            # Log name of server that failed to boot
+            $Configuration.BootFailure += $VM.Name
+        } catch {
+            $msg = "$(Get-Date -Format G): BOOT WARNING: Other error processing $($VM.Name)."
+            Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
+            $Configuration.ScriptErrors += $msg
+            $Configuration.ScriptErrors += $Error[0].Exception.GetType().FullName
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $Configuration.ScriptErrors += $ErrorMessage
+        } finally {
+            $Error.Clear()
+            $stopwatch.Stop()
+        }
+    }
+}
+
 $VMTestGroup += $VMs | Where-Object { $_.Guest.HostName -notlike '*.*' }
 $VMTestGroup += $VMs | Where-Object { $_.Guest.HostName -like '*.*' } | Get-Random
 $VMTestCount = $VMTestGroup.Count
@@ -541,7 +835,7 @@ $RunspacePool.Close()
 Write-Progress -Id 2 -Activity 'Testing credentials' -Completed
 
 if ($Configuration.CredsTest.ContainsValue('FAIL')) {
-    <# Clean up and exit script #>
+    # Clean up and exit script
     # Disconnect from vCenter
     Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
 
@@ -566,165 +860,13 @@ $VMTable = $VMTable | Sort-Object -Property Stage -CaseSensitive
 $StageIdx = 1
 
 foreach ($Stage in $Stages) {
-    <# $Stage is the current item #>
+    # $Stage is the current item
     Write-Host "Starting stage $Stage."
     $StageTable = $VMTable | Where-Object { $_.Stage -ceq $Stage }
     $StageCount = $StageTable.Count
     if ($null -eq $StageCount) { $StageCount = 1 }
     $BootGroups = $StageTable.BootGroup | Sort-Object -Unique -CaseSensitive
     $ShutdownGroups = $StageTable.ShutdownGroup | Sort-Object -Unique -CaseSensitive
-
-    # Script block to parallelize collecting VM data and shutting down the VM
-    $ShutdownWorker = {
-        [CmdletBinding()]
-        param (
-            # Name of the VM
-            [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 0)]
-            [ValidateNotNullOrEmpty()]
-            [VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine]
-            $VM,
-
-            # Credentials to use for this VM
-            [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 1)]
-            [ValidateNotNullOrEmpty()]
-            [System.Management.Automation.PSCredential]
-            $VMCreds,
-
-            # Hash table for configuration data
-            [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 2)]
-            [ValidateNotNullOrEmpty()]
-            [hashtable]
-            $Configuration
-        )
-
-        begin {
-            $ErrorActionPreference = 'Stop'
-            $Error.Clear()
-            $SvcWhitelist = "'$($($Configuration.SvcWhitelist) -join "','")'"
-
-            $ScriptText = ("try { Get-Service -Include $SvcWhitelist -ErrorAction Stop | Where-Object { " +
-                '$_.StartType -eq "Automatic" -and $_.Status -eq "Running" } | Format-Table -Property Name ' +
-                '-HideTableHeaders } catch { Write-Warning "Access denied" }')
-        }
-
-        process {
-            try {
-                Write-Host "$(Get-Date -Format G): INFO: Attempting service collection on $($VM.Name)."
-                $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
-                    -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
-
-                if ($CollectedServices.ScriptOutput -like 'WARNING: Access denied*') {
-                    $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for " +
-                        "$($VMcreds.Username) do not work on $($VM.Name). If this is a one-off error, please correct " +
-                        'the credentials on the server. If this error repeats often, update the credentials in ' +
-                        'Thycotic. Service collection failed.')
-                    $Configuration.ScriptErrors += $ErrorMessage
-                    $Configuration.Shutdown[$VM.Name] = $false
-                } else {
-                    # Convert multiline string to array of strings
-                    try {
-                        $Services = (($CollectedServices.ScriptOutput).Trim()).Split("`n")
-                        foreach ($Service in $Services) {
-                            if ($Service.Trim()) {
-                                <# Do no output if service list is empty #>
-                                $Configuration.Services += New-Object PSObject `
-                                    -Property @{ VM = $VM.Name; ServiceName = $Service.Trim() }
-                            }
-                        }
-                        Write-Host "$(Get-Date -Format G): Collected services for $($VM.Name)."
-                    } catch [System.Management.Automation.RuntimeException] {
-                        $msg = ("$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on $($VM.Name)." +
-                            ' Retrying.')
-                        Write-Host $msg -BackgroundColor Black -ForegroundColor Yellow
-                        $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText `
-                            $ScriptText -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
-
-                        if ($CollectedServices.ScriptOutput -like 'WARNING: Access denied*') {
-                            $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for " +
-                                "$($VMcreds.Username) do not work on $($VM.Name). If this is a one-off error, please " +
-                                'correct the credentials on the server. If this error repeats often, update the ' +
-                                'credentials in Thycotic. Service collection failed.')
-                            $Configuration.ScriptErrors += $ErrorMessage
-                            $Configuration.Shutdown[$VM.Name] = $false
-                        } else {
-                            # Convert multiline string to array of strings
-                            try {
-                                $Services = (($CollectedServices.ScriptOutput).Trim()).Split("`n")
-                                foreach ($Service in $Services) {
-                                    $Configuration.Services += New-Object PSObject `
-                                        -Property @{ VM = $VM.Name; ServiceName = $Service.Trim() }
-                                }
-                                Write-Host "$(Get-Date -Format G): Collected services for $($VM.Name)."
-                            } catch [System.Management.Automation.RuntimeException] {
-                                $msg = ("$(Get-Date -Format G): SHUTDOWN WARNING: Get-Service returned NULL on " +
-                                    "$($VM.Name). This is the second time all Automatic services were running. " +
-                                    'Script will only exclude the Excluded Services list from boot check.')
-                                $Configuration.ScriptErrors += $msg
-                                Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
-                            }
-                        }
-                    }
-
-                    if ($VM.ExtensionData.Guest.ToolsStatus -eq 'toolsOk') {
-                        Write-Host "$(Get-Date -Format G): Shutting down $($VM.Name)."
-                        $null = Stop-VMGuest -VM $VM -Server $Configuration.VIServer -Confirm:$false
-                    } else {
-                        Write-Host "$(Get-Date -Format G): Stopping $($VM.Name)."
-                        $null = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
-                    }
-                    $Configuration.Shutdown[$VM.Name] = $true
-
-                }
-            } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
-                $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for $($VMcreds.Username) " +
-                    "do not work on $($VM.Name). If this is a one-off error, please correct the credentials on the " +
-                    'server. If this error repeats often, then update the credentials in Thycotic.')
-                Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
-                $Configuration.ScriptErrors += $ErrorMessage
-                $Configuration.Shutdown[$VM.Name] = $false
-            } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidArgument] {
-                $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Invalid argument processing $($VM.Name)."
-                Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
-                $Configuration.ScriptErrors += $msg
-                $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-                $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-                $Configuration.ScriptErrors += $ErrorMessage
-                $ErrorMessage = ("Parameters: Server - $($Configuration.VIServer), VM - $($VM.Name), " +
-                    "GuestCredential - $($VMcreds.Username)")
-                $Configuration.ScriptErrors += $ErrorMessage
-                $Configuration.Shutdown[$VM.Name] = $false
-            } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.ViServerConnectionException], `
-                [System.InvalidOperationException] {
-                $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Failure connecting to $($VM.Name)."
-                Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
-                $Configuration.ScriptErrors += $msg
-                $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-                $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-                $Configuration.ScriptErrors += $ErrorMessage
-                $Configuration.Shutdown[$VM.Name] = $false
-            } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException] {
-                $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: Unable to process $($VM.Name). Check the " +
-                    'VM to ensure it is working properly. Error message and attempted command below:')
-                Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
-                $Configuration.ScriptErrors += $ErrorMessage
-                $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-                $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-                $Configuration.ScriptErrors += $ErrorMessage
-                $Configuration.Shutdown[$VM.Name] = $false
-            } catch {
-                $msg = "$(Get-Date -Format G): SHUTDOWN WARNING: Other error processing $($VM.Name)."
-                Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
-                $Configuration.ScriptErrors += $msg
-                $Configuration.ScriptErrors += $Error[0].Exception.GetType().FullName
-                $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-                $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-                $Configuration.ScriptErrors += $ErrorMessage
-                $Configuration.Shutdown[$VM.Name] = $false
-            } finally {
-                $Error.Clear()
-            }
-        }
-    }
 
     $StageTable = $StageTable | Sort-Object -Property ShutdownGroup, Name -CaseSensitive
 
@@ -805,7 +947,7 @@ foreach ($Stage in $Stages) {
         Write-Progress -Id 2 -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
         $ShutdownList = ($Configuration.Shutdown.GetEnumerator() | Where-Object { $_.Value -eq 'True' }).key | `
-            Where-Object { $GroupMembers.Name -eq $_ }
+                Where-Object { $GroupMembers.Name -eq $_ }
         $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
         $GroupCount = $VMGroup.Count
 
@@ -830,129 +972,6 @@ foreach ($Stage in $Stages) {
     $Configuration.Services | Export-Csv -Path $ScriptOutput -NoTypeInformation -Force
 
     Write-Host "$(Get-Date -Format G): Services list saved to $ScriptOutput"
-
-    # Script block to parallelize booting VMs
-    $BootWorker = {
-        [CmdletBinding()]
-        param (
-            # Name of the VM
-            [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 0)]
-            [ValidateNotNullOrEmpty()]
-            [VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine]
-            $VM,
-
-            # Credentials to use for this VM
-            [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 1)]
-            [ValidateNotNullOrEmpty()]
-            [System.Management.Automation.PSCredential]
-            $VMCreds,
-
-            # Hash table for configuration data
-            [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 2)]
-            [ValidateNotNullOrEmpty()]
-            [hashtable]
-            $Configuration
-        )
-
-        begin {
-            $ErrorActionPreference = 'Stop'
-            $Error.Clear()
-            # Run two Powershell commands with one Invoke-VMScript.
-            # Get service status for all services in ServicesList and use while loop to wait until all services are
-            # running.
-            if ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }) {
-                $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
-            }
-
-            $ServiceList = "'$($ServerServices -join "','")'"
-            $ScriptText = ('$Services = ' + "$ServiceList; try { while (Get-Service -Include " + '$Services | ' +
-                'Where-Object { $_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property' +
-                ' Name -HideTableHeaders ) { Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }')
-
-            # Wait 60 seconds so VM has time to obtain DNS HostName
-            Start-Sleep -Seconds 60
-        }
-
-        process {
-            try {
-                # Wait for VM power state ON and DNS Name assignment
-                while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
-                    $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
-                    # Give the machine time before attempting login after boot up
-                    Write-Host "$(Get-Date -Format G): $($VM.Name) does not have a DNS name yet. Waiting 30 seconds."
-                    Start-Sleep -Seconds 30
-                }
-
-                # Run script to check services.
-                if ($ServerServices) {
-                    $msg = "$(Get-Date -Format G): Checking the following Automatic and Running services on " + `
-                        "$($VM.Name): ($ServiceList)"
-                    Write-Host $msg -BackgroundColor DarkGreen -ForegroundColor Green
-                    $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
-                        -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
-
-                    while ($ServicesCheck.ScriptOutput -like 'WARNING: Access denied*') {
-                        Write-Host "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again." `
-                            -BackgroundColor Yellow -ForegroundColor DarkRed
-                        Start-Sleep -Seconds 60
-
-                        # Run script to check services.
-                        $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
-                            -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
-                    }
-
-                    Write-Host "$(Get-Date -Format G): Finished checking services on $($VM.Name)."
-                } else {
-                    $msg = ("$(Get-Date -Format G): $($VM.Name) had no services matching the whitelist during " +
-                        'shutdown. Script will only check that the server is powered on before continuing.')
-                    Write-Host $msg -BackgroundColor DarkGreen -ForegroundColor Green
-                }
-
-            } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
-                $ErrorMessage = ("$(Get-Date -Format G): BOOT WARNING: The credentials for $($VMcreds.Username) do " +
-                    "not work on $($VM.Name). If this is a one-off error, please correct the credentials on the " +
-                    'server. If this error repeats often, then update the credentials in Thycotic.')
-                Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
-                $Configuration.ScriptErrors += $ErrorMessage
-            } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidArgument] {
-                $msg = "$(Get-Date -Format G): BOOT WARNING: Invalid argument processing $($VM.Name)."
-                Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
-                $Configuration.ScriptErrors += $msg
-                $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-                $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-                $Configuration.ScriptErrors += $ErrorMessage
-                $ErrorMessage = ("Parameters: Server - $($Configuration.VIServer), VM - $($VM.Name), " +
-                    "GuestCredential - $($VMcreds.Username)")
-                $Configuration.ScriptErrors += $ErrorMessage
-            } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.ViServerConnectionException], `
-                [System.InvalidOperationException] {
-                $msg = "$(Get-Date -Format G): BOOT WARNING: Failure connecting to $($VM.Name)."
-                Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
-                $Configuration.ScriptErrors += $msg
-                $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-                $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-                $Configuration.ScriptErrors += $ErrorMessage
-            } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException] {
-                $ErrorMessage = ("$(Get-Date -Format G): BOOT WARNING: Unable to process $($VM.Name). Check the VM " +
-                    'to ensure it is working properly. Error message and attempted command below:')
-                Write-Host $ErrorMessage -BackgroundColor Magenta -ForegroundColor Cyan
-                $Configuration.ScriptErrors += $ErrorMessage
-                $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-                $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-                $Configuration.ScriptErrors += $ErrorMessage
-            } catch {
-                $msg = "$(Get-Date -Format G): BOOT WARNING: Other error processing $($VM.Name)."
-                Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
-                $Configuration.ScriptErrors += $msg
-                $Configuration.ScriptErrors += $Error[0].Exception.GetType().FullName
-                $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-                $ErrorMessage = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-                $Configuration.ScriptErrors += $ErrorMessage
-            } finally {
-                $Error.Clear()
-            }
-        }
-    }
 
     $StageTable = $StageTable | Sort-Object -Property BootGroup, Name -CaseSensitive
 
@@ -1036,6 +1055,35 @@ foreach ($Stage in $Stages) {
         $RunspacePool.Close()
 
         Write-Progress -Id 2 -Activity 'Booting machines' -Completed
+
+        # Check for Boot Failures
+        if ($Configuration.BootFailure) {
+            # Ask user if they want to continue
+            $wshell = New-Object -ComObject Wscript.Shell
+            $ButtonClicked = $wshell.Popup("Unable to boot the following VMs: $($Configuration.BootFailure)",
+                0, 'Boot Timeout Error', $Buttons.OKCancel + $Icon.Exclamation)
+            if ($ButtonClicked -eq $Selection.Cancel) {
+                $Configuration.ScriptErrors += "$(Get-Date -Format G): User cancelled script."
+                # Disconnect from vCenter
+                Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
+
+                # Write script errors to log file
+                if (Test-Path -Path $ScriptErrors -PathType leaf) { Clear-Content -Path $ScriptErrors }
+                Add-Content -Path $ScriptErrors -Value $Configuration.ScriptErrors
+
+                Write-Host "$(Get-Date -Format G): Script error log saved to $ScriptErrors"
+
+                # Inform user of path to service CSV to validate after restore
+                Write-Host "$(Get-Date -Format G): Service list saved to $ScriptOutput"
+
+                $wshell = New-Object -ComObject Wscript.Shell
+                $elapsedMinutes = $stopwatch.Elapsed.TotalMinutes
+                $null = $wshell.Popup("Operation completed for $($Settings.TssFolder) in $elapsedMinutes minutes",
+                    0, 'Done', $Buttons.OK + $Icon.Information)
+
+                exit 1223
+            }
+        }
     }
 
     Write-Host "Completed stage $Stage."
@@ -1062,6 +1110,7 @@ Remove-Item -Path $ScriptOutput -Force
 
 $wshell = New-Object -ComObject Wscript.Shell
 $elapsedMinutes = $stopwatch.Elapsed.TotalMinutes
+$stopwatch.Stop()
 $null = $wshell.Popup("Operation completed for $($Settings.TssFolder) in $elapsedMinutes minutes", 0, 'Done',
     $Buttons.OK + $Icon.Information)
 #####END OF SCRIPT#######
