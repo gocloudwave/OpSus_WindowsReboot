@@ -59,7 +59,7 @@ $Configuration = [hashtable]::Synchronized(@{})
 $Configuration.Services = @()
 $Configuration.ScriptErrors = @()
 $Configuration.Shutdown = @{}
-$Configuration.BootFailure = @{}
+$Configuration.BootFailure = @()
 $Configuration.VIServer = $null
 $Configuration.CredsTest = @{}
 
