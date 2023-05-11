@@ -50,7 +50,7 @@ _NOTE: Current script only supports VMware._
 1. You must have .NET Framework version 4.7.2 or higher to run this script.
 2. Run `Restart-Windows.ps1` from a server on the same domain that vCenter uses
    for authentication.
-   - The user must have the follwing permissions:
+   - The user must have the follwing permissions in vCenter:
      - Virtual Machine
        - Guest Operations
          - Guest operation modifications
@@ -60,6 +60,8 @@ _NOTE: Current script only supports VMware._
          - Console interaction
          - Power off
          - Power on
+   - The user also must have permission to add/update PowerShell modules on the
+     system where the script will run.
 3. Create `settings.json` file in script directory. **Note: You may use any
    name, but it must be a JSON file.**
 
