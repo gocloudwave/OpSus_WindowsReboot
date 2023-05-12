@@ -949,20 +949,22 @@ foreach ($Stage in $Stages) {
 
         $ShutdownList = ($Configuration.Shutdown.GetEnumerator() | Where-Object { $_.Value -eq 'True' }).key | `
                 Where-Object { $GroupMembers.Name -eq $_ }
-        $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
-        $GroupCount = $VMGroup.Count
-
-        while ($VMGroup.PowerState -contains 'PoweredOn') {
-            $VMsShutdown = ($VMGroup.PowerState -eq 'PoweredOff').Count
-            $PercentComplete = ($VMsShutdown / $GroupCount).ToString('P')
-            $Status = "Waiting for shutdown. $VMsShutdown/$GroupCount : $PercentComplete Complete"
-            Write-Progress -Id 2 -Activity 'Shutdown' -Status $Status `
-                -PercentComplete $PercentComplete.Replace('%', '')
-            $PoweredOnVMs = $VMGroup | Where-Object { $_.PowerState -eq 'PoweredOn' }
-            Write-Host "$(Get-Date -Format G): Waiting for the following machines to shut down: $PoweredOnVMs" `
-                -BackgroundColor Yellow -ForegroundColor DarkRed
-            Start-Sleep -Milliseconds 1000
+        if ($ShutdownList) {
             $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
+            $GroupCount = $VMGroup.Count
+
+            while ($VMGroup.PowerState -contains 'PoweredOn') {
+                $VMsShutdown = ($VMGroup.PowerState -eq 'PoweredOff').Count
+                $PercentComplete = ($VMsShutdown / $GroupCount).ToString('P')
+                $Status = "Waiting for shutdown. $VMsShutdown/$GroupCount : $PercentComplete Complete"
+                Write-Progress -Id 2 -Activity 'Shutdown' -Status $Status `
+                    -PercentComplete $PercentComplete.Replace('%', '')
+                $PoweredOnVMs = $VMGroup | Where-Object { $_.PowerState -eq 'PoweredOn' }
+                Write-Host "$(Get-Date -Format G): Waiting for the following machines to shut down: $PoweredOnVMs" `
+                    -BackgroundColor Yellow -ForegroundColor DarkRed
+                Start-Sleep -Milliseconds 1000
+                $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
+            }
         }
 
         Write-Progress -Id 2 -Activity 'Shutdown' -Completed
