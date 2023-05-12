@@ -17,6 +17,7 @@ _NOTE: Current script only supports VMware._
     - [DNSDomain](#dnsdomain)
     - [InvalidCertAction](#invalidcertaction)
     - [MinsBtwStages](#minsbtwstages)
+    - [Timeout](#timeout)
     - [vCenter](#vcenter)
     - [TssFolder](#tssfolder)
     - [TssDomain](#tssdomain)
@@ -72,6 +73,7 @@ _NOTE: Current script only supports VMware._
      "InvalidCertAction": "Ignore",
      "DNSDomain": "fabrikam.LOCAL",
      "MinsBtwStages": 15,
+     "Timeout": 5,
      "vCenter": "vcenter.fabrikam.local",
      "TssFolder": "ThycoticFolder",
      "TssDomain": "ThycoticDomain",
@@ -151,6 +153,11 @@ a certificate error. For more information about invalid certificates, run
 
 How many minutes should the script wait after completing one stage before
 beginning the next stage.
+
+### Timeout
+
+How many minutes should the script wait before considering a server boot as
+failed. The user will see a prompt to indicate the failed servers.
 
 ### vCenter
 

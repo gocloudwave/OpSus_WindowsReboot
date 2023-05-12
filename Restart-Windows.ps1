@@ -88,6 +88,7 @@ if ($OpenFileDialog.ShowDialog() -eq 'Cancel') {
 
 $Settings = Get-Content "$($OpenFileDialog.filename)" -Raw | ConvertFrom-Json
 $Configuration.SvcWhitelist = $Settings.SvcWhitelist
+$Configuration.Timeout = $Settings.Timeout
 
 # Display settings details and ask user to confirm continuation of script
 if ($Settings.TssFolder) {
