@@ -1,3 +1,8 @@
+#Requires -Version 5.1
+#Requires -Modules @{ModuleName='VMware.PowerCLI';ModuleVersion='13.0'}
+#Requires -Modules @{ModuleName='Thycotic.SecretServer';RequiredVersion='0.61.1'}
+#Requires -PSEdition Desktop
+
 <#
 .SYNOPSIS
     Automate Windows reboots in a controlled order.
@@ -86,7 +91,9 @@ if ($OpenFileDialog.ShowDialog() -eq 'Cancel') {
     Exit 1223
 }
 
-$Settings = Get-Content "$($OpenFileDialog.filename)" -Raw | ConvertFrom-Json
+$CSVFilename = $OpenFileDialog.filename
+
+$Settings = Get-Content $CSVFilename -Raw | ConvertFrom-Json
 $Configuration.SvcWhitelist = $Settings.SvcWhitelist
 $Configuration.Timeout = $Settings.Timeout
 
@@ -157,6 +164,8 @@ foreach ($VM in $VMTable) {
     }
 }
 
+$VMTable | Add-Member -MemberType NoteProperty -Name 'Processed' -Value $false
+
 # Drop all rows that the script shouldn't process
 $VMTable = $VMTable | Where-Object { $_.Process -ceq $true }
 
@@ -194,65 +203,7 @@ if ($Env:USERDNSDOMAIN -ne $Settings.DNSDomain) {
 . "$PSScriptRoot\Get-VMToolsStatus.ps1"
 . "$PSScriptRoot\User-Prompts.ps1"
 
-# Install or update to latest PowerCLI version
-$PowerCLIPSModule = Get-Module -Name VMware.PowerCLI -ListAvailable
-$PowerCLIAllPrograms = Get-Package -ProviderName Programs -IncludeWindowsInstaller | `
-        Where-Object { $_.Name -eq 'VMware vSphere PowerCLI' }
-
-if ($null -eq $PowerCLIPSModule -or $PowerCLIAllPrograms) {
-    # Call Install-PowerCLI
-    Start-Process -FilePath powershell.exe `
-        -ArgumentList { . "$PSScriptRoot\Install-PowerCLI.ps1"; Install-PowerCLI } -Verb RunAs -Wait
-} elseif ($PowerCLIPSModule.Version -lt (Find-Module -Name VMware.PowerCLI).Version) {
-    # Update PowerCLI if not at the latest version
-    try {
-        Start-Process -FilePath powershell.exe -ArgumentList {
-            try {
-                Update-Module -Name VMware.PowerCLI -Force -ErrorAction Stop
-            } catch {
-                Install-Module -Name VMware.PowerCLI -SkipPublisherCheck -Force
-            }
-        } -Verb RunAs -Wait
-    } catch {
-        $wshell = New-Object -ComObject Wscript.Shell
-        $null = $wshell.Popup('Unable to update PowerCLI to latest version.', 0, 'Failed update', `
-                $Buttons.OK + $Icon.Stop)
-
-        Exit 10
-    }
-
-    # Uninstall old versions of PowerCLI
-    Start-Process -FilePath powershell.exe -ArgumentList {
-        Get-InstalledModule -Name VMware.PowerCLI | ForEach-Object {
-            $CurrVersion = $PSItem.Version
-            Get-InstalledModule -Name $PSItem.Name -AllVersions | Where-Object -Property Version -LT $CurrVersion
-        } | Uninstall-Module -Verbose
-    } -Verb RunAs -Wait
-}
-
-# Install or update to latest Thycotic.SecretServer PowerShell module
-$TssPSModule = Get-Module -Name Thycotic.SecretServer -ListAvailable
-
-if ($null -eq $TssPSModule) {
-    if ((Get-PSRepository -Name 'PSGallery').InstallationPolicy -ne 'Trusted') {
-        Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted
-    }
-    Start-Process -FilePath powershell.exe -ArgumentList {
-        Install-Module -Name Thycotic.SecretServer -Confirm:$false -AllowClobber -Force
-    } -Verb RunAs -Wait
-} elseif ($TssPSModule.Version -lt (Find-Module -Name Thycotic.SecretServer).Version) {
-    Start-Process -FilePath powershell.exe -ArgumentList { Update-Module -Name Thycotic.SecretServer -Force } `
-        -Verb RunAs -Wait
-
-    # Uninstall old versions of Thycotic.SecretServer
-    Start-Process -FilePath powershell.exe -ArgumentList {
-        Get-InstalledModule -Name Thycotic.SecretServer | ForEach-Object {
-            $CurrVersion = $PSItem.Version
-            Get-InstalledModule -Name $PSItem.Name -AllVersions | Where-Object -Property Version -LT $CurrVersion
-        } | Uninstall-Module -Verbose
-    } -Verb RunAs -Wait
-}
-
+# Function to wait between stages
 function Wait-Stage {
     [CmdletBinding()]
     param (
@@ -298,7 +249,6 @@ try {
 
     Exit 1223
 }
-
 
 # Get VM Tools status for all VMs
 $VMsTools = Get-VMToolsStatus -InputObject $VMs
@@ -871,8 +821,8 @@ foreach ($Stage in $Stages) {
 
     $StageTable = $StageTable | Sort-Object -Property ShutdownGroup, Name -CaseSensitive
 
-    foreach ($group in $ShutdownGroups) {
-        $GroupMembers = $StageTable | Where-Object { $_.ShutdownGroup -ceq $group }
+    foreach ($ShutdownGroup in $ShutdownGroups) {
+        $GroupMembers = $StageTable | Where-Object { $_.ShutdownGroup -ceq $ShutdownGroup }
         $GroupCount = $GroupMembers.Count
         if ($null -eq $GroupCount) { $GroupCount = 1 }
         $VMGroup = $VMs | Where-Object { $GroupMembers.Name -eq $_.Name }
@@ -888,7 +838,7 @@ foreach ($Stage in $Stages) {
         $Jobs = New-Object System.Collections.ArrayList
 
         # Display progress bar
-        Write-Progress -Id 1 -Activity "Creating Runspaces for stage $Stage, group $group" `
+        Write-Progress -Id 1 -Activity "Creating Runspaces for stage $Stage, group $ShutdownGroup" `
             -Status "Creating runspaces for $GroupCount VMs." -PercentComplete 0
 
         $VMindex = 1
@@ -914,7 +864,7 @@ foreach ($Stage in $Stages) {
 
             $null = $Jobs.Add($JobObj)
             $RSPercentComplete = ($VMindex / $GroupCount).ToString('P')
-            $Activity = "Runspace creation: Processing $VM, Stage $Stage, Group $group"
+            $Activity = "Runspace creation: Processing $VM, Stage $Stage, Group $ShutdownGroup"
             $Status = "$VMindex/$GroupCount : $RSPercentComplete Complete"
             $CleanPercent = $RSPercentComplete.Replace('%', '')
             Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete $CleanPercent
@@ -922,12 +872,12 @@ foreach ($Stage in $Stages) {
             $VMindex++
         }
 
-        Write-Progress -Id 1 -Activity "Runspace creation for stage $Stage, group $group" -Completed
+        Write-Progress -Id 1 -Activity "Runspace creation for stage $Stage, group $ShutdownGroup" -Completed
 
         # Used to determine percentage completed.
         $TotalJobs = $Jobs.Runspace.Count
 
-        Write-Progress -Id 2 -Activity "Processing shutdown; Stage $Stage, Group $group" -Status 'Shutting down.' `
+        Write-Progress -Id 2 -Activity "Processing shutdown; Stage $Stage, Group $ShutdownGroup" -Status 'Shutting down.' `
             -PercentComplete 0
 
         # Update percentage complete and wait until all jobs are finished.
@@ -935,7 +885,7 @@ foreach ($Stage in $Stages) {
             $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
             $PercentComplete = ($CompletedJobs / $TotalJobs).ToString('P')
             $Status = "Shutting down. $CompletedJobs/$TotalJobs : $PercentComplete Complete"
-            Write-Progress -Id 2 -Activity "Collecting services and shutting down; Stage $stage, Group $group" `
+            Write-Progress -Id 2 -Activity "Collecting services and shutting down; Stage $stage, Group $ShutdownGroup" `
                 -Status $Status -PercentComplete $PercentComplete.Replace('%', '')
             Start-Sleep -Milliseconds 100
         }
@@ -943,7 +893,7 @@ foreach ($Stage in $Stages) {
         # Clean up runspace.
         $RunspacePool.Close()
 
-        Write-Progress -Id 2 -Activity "Processing shutdown; Stage $Stage, Group $group" -Completed
+        Write-Progress -Id 2 -Activity "Processing shutdown; Stage $Stage, Group $ShutdownGroup" -Completed
 
         Write-Progress -Id 2 -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
@@ -978,8 +928,8 @@ foreach ($Stage in $Stages) {
 
     $StageTable = $StageTable | Sort-Object -Property BootGroup, Name -CaseSensitive
 
-    foreach ($group in $BootGroups) {
-        $GroupMembers = $StageTable | Where-Object { $_.BootGroup -ceq $group }
+    foreach ($BootGroup in $BootGroups) {
+        $GroupMembers = $StageTable | Where-Object { $_.BootGroup -ceq $BootGroup }
         $GroupCount = $GroupMembers.Count
         if ($null -eq $GroupCount) { $GroupCount = 1 }
         $VMGroup = $VMs | Where-Object { $GroupMembers.Name -eq $_.Name }
@@ -995,7 +945,7 @@ foreach ($Stage in $Stages) {
         $Jobs = New-Object System.Collections.ArrayList
 
         # Display progress bar
-        Write-Progress -Id 1 -Activity "Creating Runspaces for stage $Stage, group $group" `
+        Write-Progress -Id 1 -Activity "Creating Runspaces for stage $Stage, group $BootGroup" `
             -Status "Creating runspaces for $GroupCount VMs." -PercentComplete 0
 
         $VMIdx = 1
@@ -1025,7 +975,7 @@ foreach ($Stage in $Stages) {
 
                 $null = $Jobs.Add($JobObj)
                 $RSPercentComplete = ($VMIdx / $GroupCount).ToString('P')
-                $Activity = "Runspace creation for bootup: Processing $VM, Stage $Stage, Group $group"
+                $Activity = "Runspace creation for bootup: Processing $VM, Stage $Stage, Group $BootGroup"
                 $Status = "$VMIdx/$GroupCount : $RSPercentComplete Complete"
                 $CleanPercent = $RSPercentComplete.Replace('%', '')
                 Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete $CleanPercent
@@ -1037,7 +987,7 @@ foreach ($Stage in $Stages) {
             }
         }
 
-        Write-Progress -Id 1 -Activity "Runspace creation for stage $Stage, group $group" -Completed
+        Write-Progress -Id 1 -Activity "Runspace creation for stage $Stage, group $BootGroup" -Completed
 
         # Used to determine percentage completed.
         $TotalJobs = $Jobs.Runspace.Count
@@ -1049,7 +999,7 @@ foreach ($Stage in $Stages) {
             $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
             $PercentComplete = ($CompletedJobs / $TotalJobs).ToString('P')
             $Status = "$CompletedJobs/$TotalJobs : $PercentComplete Complete"
-            Write-Progress -Id 2 -Activity "Booting machines; Stage $Stage, Group $group" -Status $Status `
+            Write-Progress -Id 2 -Activity "Booting machines; Stage $Stage, Group $BootGroup" -Status $Status `
                 -PercentComplete $PercentComplete.Replace('%', '')
             Start-Sleep -Milliseconds 100
         }
@@ -1059,6 +1009,14 @@ foreach ($Stage in $Stages) {
 
         Write-Progress -Id 2 -Activity 'Booting machines' -Completed
 
+        # Update $VMTable Processed attribute to True if VM was successfully booted.
+        foreach ($VM in $VMGroup) {
+            $VMToUpdate = $VMTable | Where-Object { $_.Name -eq $VM.Name }
+            if ($VM.Name -notin $Configuration.BootFailure -and $Configuration.Shutdown[$VM.Name]) {
+                $VMToUpdate.Processed = $true
+            }
+        }
+
         # Check for Boot Failures
         if ($Configuration.BootFailure) {
             # Ask user if they want to continue
@@ -1066,6 +1024,10 @@ foreach ($Stage in $Stages) {
             $ButtonClicked = $wshell.Popup("Unable to boot the following VMs: $($Configuration.BootFailure)",
                 0, 'Boot Timeout Error', $Buttons.OKCancel + $Icon.Exclamation)
             if ($ButtonClicked -eq $Selection.Cancel) {
+                # Write new VM list with added Processed flag to CSV
+                $newCSVFilename = "$CSVFilename.new"
+                if (Test-Path -Path $newCSVFilename -PathType leaf) { Clear-Content -Path $newCSVFilename }
+                $VMTable | Export-Csv -Path $newCSVFilename -NoTypeInformation -Force
                 $Configuration.ScriptErrors += "$(Get-Date -Format G): User cancelled script."
                 # Disconnect from vCenter
                 Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
