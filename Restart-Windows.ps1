@@ -75,7 +75,7 @@ $VMCreds = @{}
 $VMTestGroup = @()
 
 Import-Module -Name VMware.PowerCLI -MinimumVersion 13.1.0.21624340 -Force -NoClobber
-# Import-Module -Name Thycotic.SecretServer -RequiredVersion 0.61.0 -Force -NoClobber
+Import-Module -Name Thycotic.SecretServer -RequiredVersion 0.61.0 -Force -NoClobber
 
 # Prompt user for JSON file with settings
 [System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null
