@@ -1,6 +1,6 @@
 #Requires -Version 5.1
-#Requires -Modules @{ModuleName='VMware.PowerCLI';ModuleVersion='13.0'}
-#Requires -Modules @{ModuleName='Thycotic.SecretServer';RequiredVersion='0.61.1'}
+#Requires -Modules @{ModuleName='VMware.PowerCLI';ModuleVersion='13.1.0.21624340'}
+#Requires -Modules @{ModuleName='Thycotic.SecretServer';RequiredVersion='0.61.0'}
 #Requires -PSEdition Desktop
 
 <#
@@ -295,11 +295,11 @@ if ($ButtonClicked -eq $Selection.Cancel) {
     $LMCreds = Get-Credential -Message 'Please enter Local Machine Admin credentials.'
 } else {
     try {
-        $TssFolders = Search-TssFolders -TssSession $Session -TopLevelOnly $false -SearchText $Settings.TssFolder `
+        $TssFolders = Search-TssFolders -TssSession $Session -SearchText $Settings.TssFolder `
             -ErrorAction $ErrorActionPreference
     } catch {
         # Unable to find the folder specified in settings.json. Listing all top level folders.
-        $TssFolders = Search-TssFolders -TssSession $Session -TopLevelOnly $true
+        $TssFolders = Search-TssFolders -TssSession $Session -ParentFolderId -1 -ErrorAction $ErrorActionPreference
     }
 
     if (($TssFolders.Count -eq 1) -or ($null -eq $TssFolders.Count)) {
