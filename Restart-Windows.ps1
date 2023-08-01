@@ -1,6 +1,4 @@
 #Requires -Version 5.1
-#Requires -Modules @{ModuleName='VMware.PowerCLI';ModuleVersion='13.1.0.21624340'}
-#Requires -Modules @{ModuleName='Thycotic.SecretServer';RequiredVersion='0.61.0'}
 #Requires -PSEdition Desktop
 
 <#
@@ -75,6 +73,9 @@ $ADSecrets = $null
 $LMSecrets = $null
 $VMCreds = @{}
 $VMTestGroup = @()
+
+Import-Module -Name VMware.PowerCLI -MinimumVersion 13.1.0.21624340 -Force -NoClobber
+# Import-Module -Name Thycotic.SecretServer -RequiredVersion 0.61.0 -Force -NoClobber
 
 # Prompt user for JSON file with settings
 [System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null
