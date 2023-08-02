@@ -33,9 +33,6 @@ _NOTE: Current script only supports VMware._
   - Contains a function to create a PS Credential from Thycotic or user prompts.
 - Get-VMToolsStatus.ps1
   - Contains a function to check the VMware tools status.
-- Install-PowerCLI.ps1
-  - Can be run standalone, as an Administrator, or can be called by
-    Restart-Windows.ps1 to configure the server to run PowerCLI commands.
 - Restart-Windows.ps1
   - Run this script to restart VMs.
 - Search-TssFolders.ps1
@@ -49,7 +46,13 @@ _NOTE: Current script only supports VMware._
 ## Requirements
 
 1. You must have .NET Framework version 4.7.2 or higher to run this script.
-2. Run `Restart-Windows.ps1` from a server on the same domain that vCenter uses
+2. You must have PowerShell 5.1.
+3. You must [install PowerShell module VMware.PowerCLI](https://www.powershellgallery.com/packages/VMware.PowerCLI)
+   version 13.1.0.21624340 or above.
+4. You must [install PowerShell module Thycotic.SecretServer version 0.61.0](https://www.powershellgallery.com/packages/Thycotic.SecretServer/0.61.0) (this is the final version that supports PowerShell 5.1)
+   1. You will need to modify Search-TssSecret.ps1 line 274 as mentioned
+      [here](https://github.com/thycotic-ps/thycotic.secretserver/issues/350#issuecomment-1609828582).
+5. Run `Restart-Windows.ps1` from a server on the same domain that vCenter uses
    for authentication.
    - The user must have the follwing permissions in vCenter:
      - Virtual Machine
@@ -63,7 +66,7 @@ _NOTE: Current script only supports VMware._
          - Power on
    - The user also must have permission to add/update PowerShell modules on the
      system where the script will run.
-3. Create `settings.json` file in script directory. **Note: You may use any
+6. Create `settings.json` file in script directory. **Note: You may use any
    name, but it must be a JSON file.**
 
    **Example**
@@ -87,7 +90,7 @@ _NOTE: Current script only supports VMware._
    }
    ```
 
-4. Create a CSV file listing the VM Names, whether or not to process each, and
+7. Create a CSV file listing the VM Names, whether or not to process each, and
    the order for processing. The file must have at least three columns (Name,
    Process, and BootGroup) with a header row. The file may contain up to two
    additional columns (ShutdownGroup and Stage). The stage column allows a user
