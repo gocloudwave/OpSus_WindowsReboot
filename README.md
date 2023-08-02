@@ -198,17 +198,13 @@ script will ensure the same state upon boot. Wildcards are permitted.
 ## Restart Windows VMs
 
 1. Place `Get-UserCredentials.ps1`, `Get-VMToolsStatus.ps1`,
-   `Install-PowerCLI.ps1`, `Restart-Windows.ps1`, `Search-TssFolders.ps1`,
+   `Restart-Windows.ps1`, `Search-TssFolders.ps1`,
    `settings.json`, and `User-Prompts.ps1` in a single folder on a machine that
    can connect to the vCenter server.
    - If you downloaded the scripts from the Internet, you need to ensure that
      the files are unblocked. You can ublock them via the PowerShell command:
      `Get-ChildItem {PATH TO DOWNLOADED FILES} | Unblock-File`.
 2. Run `Restart-Windows.ps1`.
-   - If the script fails to configure PowerCLI, load `Install-PowerCLI.ps1`
-     manually as an Administrator and then call the function `Install-PowerCLI`.
-   - Loading a PowerShell script requires running the following command:
-     `. .\Install-PowerCLI.ps1`.
 3. The script will prompt the user for the settings.json file location.
    - This is useful if you want to have a settings file for each customer.
 4. The script will prompt the user for a CSV file listing VM Names, Process,
