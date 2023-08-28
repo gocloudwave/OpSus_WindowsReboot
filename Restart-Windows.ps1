@@ -258,8 +258,8 @@ foreach ($VM in $VMsTools) {
         $msg = ("$(Get-Date -Format G): WARNING: The version of VMware Tools on VM '$($VM.Name)' is out of " +
             'date and may cause the script to work improperly.')
         $Configuration.ScriptErrors += $msg
-        if ($VM.Status -ne 'toolsOk') {
-            $msg = ("$(Get-Date -Format G): WARNING: VMware Tools NOT OK on '$($VM.Name)'. Stopping VM " +
+        if ($VM.Status -eq 'guestToolsNotRunning') {
+            $msg = ("$(Get-Date -Format G): WARNING: VMware Tools NOT running on '$($VM.Name)'. Stopping VM " +
                 'instead of shutting down.')
             $Configuration.ScriptErrors += $msg
         }
@@ -513,7 +513,7 @@ $ShutdownWorker = {
                     }
                 }
 
-                if ($VM.ExtensionData.Guest.ToolsStatus -eq 'toolsOk') {
+                if ($VM.ExtensionData.Guest.toolsRunningStatus -ne 'guestToolsNotRunning') {
                     Write-Host "$(Get-Date -Format G): Shutting down $($VM.Name)."
                     $null = Stop-VMGuest -VM $VM -Server $Configuration.VIServer -Confirm:$false
                 } else {

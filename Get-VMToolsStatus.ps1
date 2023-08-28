@@ -62,9 +62,9 @@ function Get-VMToolsStatus {
             try {
                 [PSCustomObject]@{
                     Name          = $Object.name
-                    Status        = $Object.ExtensionData.Guest.ToolsStatus
-                    UpgradeStatus = $Object.ExtensionData.Guest.ToolsVersionStatus2
-                    Version       = $Object.ExtensionData.Guest.ToolsVersion
+                    Status        = $Object.ExtensionData.Guest.toolsRunningStatus
+                    UpgradeStatus = $Object.ExtensionData.Guest.toolsVersionStatus2
+                    Version       = $Object.ExtensionData.Guest.toolsVersion
                 }
             } catch {
                 Write-Error $_.Exception.Message
