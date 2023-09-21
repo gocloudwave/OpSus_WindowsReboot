@@ -1067,6 +1067,9 @@ Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
 
 # Write script errors to log file
 if (Test-Path -Path $ScriptErrors -PathType leaf) { Clear-Content -Path $ScriptErrors }
+$elapsedMinutes = $stopwatch.Elapsed.TotalMinutes
+$stopwatch.Stop()
+$Configuration.ScriptErrors += "$(Get-Date -Format G): Operation completed in $elapsedMinutes minutes."
 Add-Content -Path $ScriptErrors -Value $Configuration.ScriptErrors
 
 Write-Host "$(Get-Date -Format G): Script error log saved to $ScriptErrors"
@@ -1075,8 +1078,6 @@ Write-Host "$(Get-Date -Format G): Script error log saved to $ScriptErrors"
 Remove-Item -Path $ScriptOutput -Force
 
 $wshell = New-Object -ComObject Wscript.Shell
-$elapsedMinutes = $stopwatch.Elapsed.TotalMinutes
-$stopwatch.Stop()
 $null = $wshell.Popup("Operation completed for $($Settings.TssFolder) in $elapsedMinutes minutes", 0, 'Done',
     $Buttons.OK + $Icon.Information)
 #####END OF SCRIPT#######
