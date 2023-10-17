@@ -221,5 +221,8 @@ script will ensure the same state upon boot. Wildcards are permitted.
 8. If no secrets exist with the Active Directory or Local Windows templates, the
    script will prompt the user to enter the credentials manually.
 9. The script will output its actions to the screen while it runs.
+   - The script will appear frozen if the required services on a server do not
+     start. If this happens, the end user must take action to start the services
+     manually and the script will continue as planned.
 10. The script will display a `Done` dialog box when it completes that states
     how long the script took to run.
