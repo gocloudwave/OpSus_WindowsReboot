@@ -181,6 +181,7 @@ $FolderBrowser.Description = 'Select a folder in which to store logs and tempora
 [void]$FolderBrowser.ShowDialog()
 
 $ScriptOutput = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUniversal)-Services.csv"
+$UnvOutput = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUniversal)-UNV-Services.csv"
 $ScriptErrors = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUniversal)-ScriptErrors.log"
 $ADTssTemplateId = $Settings.SecretTemplateLookup.ActiveDirectoryAccount
 $LMTssTemplateId = $Settings.SecretTemplateLookup.LocalUserWindowsAccount
@@ -604,7 +605,8 @@ $BootWorker = {
         # Get service status for all services in ServicesList and use while loop to wait until all services are
         # running.
         if ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }) {
-            $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }).ServiceName
+            $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name -and
+                    $_ServiceName -notmatch '^MEDITECH UNV ' }).ServiceName
         }
 
         $ServiceList = "'$($ServerServices -join "','")'"
@@ -924,6 +926,9 @@ foreach ($Stage in $Stages) {
     # Write services data to CSV. If manual intervention is needed, user can access this file to check services.
     if (Test-Path -Path $ScriptOutput -PathType leaf) { Clear-Content -Path $ScriptOutput }
     $Configuration.Services | Export-Csv -Path $ScriptOutput -NoTypeInformation -Force
+    if (Test-Path -Path $UnvOutput -PathType leaf) { Clear-Content -Path $UnvOutput }
+    $Congifuration.Services | Where-Object { $_.ServiceName -match '^MEDITECH UNV ' } | `
+            Export-Csv -Path $UnvOutput -NoTypeInformation -Force
 
     Write-Host "$(Get-Date -Format G): Services list saved to $ScriptOutput"
 
