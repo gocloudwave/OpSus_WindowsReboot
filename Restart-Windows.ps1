@@ -379,46 +379,64 @@ $TestCredentials = {
         $Configuration
     )
 
-    $Error.Clear()
-    try {
-        $ScriptText = ('try { Get-WmiObject -Class Win32_ComputerSystem -ErrorAction Stop } ' +
-            "catch { Write-Warning 'Access denied' }")
-        $TestAccess = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
-            -GuestCredential $VMcreds -ErrorAction Stop 3> $null
-
-        if ($TestAccess.ScriptOutput -like 'WARNING: Access denied*') {
-            $Configuration.CredsTest[$VM.Name] = 'FAIL'
-        } else {
-            $Configuration.CredsTest[$VM.Name] = 'SUCCESS'
-        }
-    } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
-        $Configuration.CredsTest[$VM.Name] = 'FAIL'
-    } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidArgument] {
-        $line = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-        $params = ("Parameters: Server - $($Configuration.VIServer), VM - $VM, GuestCredential - " +
-            "$($VMcreds.Username)")
-        $Configuration.ScriptErrors += "WARNING: Invalid argument processing $VM."
-        $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-        $Configuration.ScriptErrors += $line
-        $Configuration.ScriptErrors += $params
-        $Configuration.CredsTest[$VM.Name] = 'FAIL'
-    } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.ViServerConnectionException],
-    [System.InvalidOperationException],
-    [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException] {
-        $line = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-        $Configuration.ScriptErrors += "WARNING: Failure connecting to $VM."
-        $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-        $Configuration.ScriptErrors += $line
-        $Configuration.CredsTest[$VM.Name] = 'FAIL'
-    } catch {
-        $Configuration.ScriptErrors += "WARNING: Other error processing $VM."
-        $line = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-        $Configuration.ScriptErrors += $Error[0].Exception.GetType().FullName
-        $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
-        $Configuration.ScriptErrors += $line
-        $Configuration.CredsTest[$VM.Name] = 'FAIL'
-    } finally {
+    begin {
+        $ErrorActionPreference = 'Stop'
         $Error.Clear()
+        $ScriptText = 'try { Get-WmiObject -Class Win32_ComputerSystem -ErrorAction Stop } ' +
+        "catch { Write-Warning 'Access denied' }"
+        $prevProgressPreference = $global:ProgressPreference
+    }
+
+    process {
+        try {
+            $global:ProgressPreference = 'SilentlyContinue'
+            $InvokeVMScriptParams = @{
+                Server          = $Configuration.VIServer
+                VM              = $VM
+                ScriptText      = $ScriptText
+                GuestCredential = $VMcreds
+                ErrorAction     = $ErrorActionPreference
+            }
+            $TestAccess = Invoke-VMScript @InvokeVMScriptParams 3> $null
+
+            if ($TestAccess.ScriptOutput -like 'WARNING: Access denied*') {
+                $Configuration.CredsTest[$VM.Name] = 'FAIL'
+            } else {
+                $Configuration.CredsTest[$VM.Name] = 'SUCCESS'
+            }
+        } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
+            $Configuration.CredsTest[$VM.Name] = 'FAIL'
+        } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidArgument] {
+            $line = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $params = ("Parameters: Server - $($Configuration.VIServer), VM - $VM, GuestCredential - " +
+                "$($VMcreds.Username)")
+            $Configuration.ScriptErrors += "WARNING: Invalid argument processing $VM."
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $Configuration.ScriptErrors += $line
+            $Configuration.ScriptErrors += $params
+            $Configuration.CredsTest[$VM.Name] = 'FAIL'
+        } catch [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.ViServerConnectionException],
+        [System.InvalidOperationException],
+        [VMware.VimAutomation.Sdk.Types.V1.ErrorHandling.VimException.VimException] {
+            $line = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $Configuration.ScriptErrors += "WARNING: Failure connecting to $VM."
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $Configuration.ScriptErrors += $line
+            $Configuration.CredsTest[$VM.Name] = 'FAIL'
+        } catch {
+            $Configuration.ScriptErrors += "WARNING: Other error processing $VM."
+            $line = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
+            $Configuration.ScriptErrors += $Error[0].Exception.GetType().FullName
+            $Configuration.ScriptErrors += "Error Message: $($_.Exception.Message)"
+            $Configuration.ScriptErrors += $line
+            $Configuration.CredsTest[$VM.Name] = 'FAIL'
+        } finally {
+            $Error.Clear()
+        }
+    }
+
+    end {
+        $global:ProgressPreference = $prevProgressPreference
     }
 
 }
@@ -454,13 +472,21 @@ $ShutdownWorker = {
         $ScriptText = ("try { Get-Service -Include $SvcWhitelist -ErrorAction Stop | Where-Object { " +
             '$_.StartType -eq "Automatic" -and $_.Status -eq "Running" } | Format-Table -Property Name ' +
             '-HideTableHeaders } catch { Write-Warning "Access denied" }')
+        $prevProgressPreference = $global:ProgressPreference
     }
 
     process {
         try {
+            $global:ProgressPreference = 'SilentlyContinue'
             Write-Host "$(Get-Date -Format G): INFO: Attempting service collection on $($VM.Name)."
-            $CollectedServices = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
-                -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+            $InvokeVMScriptParams = @{
+                Server          = $Configuration.VIServer
+                VM              = $VM
+                ScriptText      = $ScriptText
+                GuestCredential = $VMcreds
+                ErrorAction     = $ErrorActionPreference
+            }
+            $CollectedServices = Invoke-VMScript @InvokeVMScriptParams 3> $null
 
             if ($CollectedServices.ScriptOutput -like 'WARNING: Access denied*') {
                 $ErrorMessage = ("$(Get-Date -Format G): SHUTDOWN WARNING: The credentials for " +
@@ -573,6 +599,10 @@ $ShutdownWorker = {
             $Error.Clear()
         }
     }
+
+    end {
+        $global:ProgressPreference = $prevProgressPreference
+    }
 }
 
 # Script block to parallelize booting VMs
@@ -614,6 +644,8 @@ $BootWorker = {
             'Where-Object { $_.StartType -eq "Automatic" -and $_.Status -ne "Running" } | Format-Table -Property' +
             ' Name -HideTableHeaders ) { Start-Sleep -Seconds 1 } } catch { Write-Warning "Access denied" }')
 
+        $prevProgressPreference = $global:ProgressPreference
+
         # Wait 60 seconds so VM has time to obtain DNS HostName
         Start-Sleep -Seconds 60
         $TimeoutCounter = [System.Diagnostics.Stopwatch]::StartNew()
@@ -630,6 +662,7 @@ $BootWorker = {
 
     process {
         try {
+            $global:ProgressPreference = 'SilentlyContinue'
             # Wait for VM power state ON and DNS Name assignment
             while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
                 CheckTimeout -ErrorAction $ErrorActionPreference
@@ -644,8 +677,14 @@ $BootWorker = {
                 $msg = "$(Get-Date -Format G): Checking the following Automatic and Running services on " + `
                     "$($VM.Name): ($ServiceList)"
                 Write-Host $msg -BackgroundColor DarkGreen -ForegroundColor Green
-                $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
-                    -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+                $InvokeVMScriptParams = @{
+                    Server          = $Configuration.VIServer
+                    VM              = $VM
+                    ScriptText      = $ScriptText
+                    GuestCredential = $VMcreds
+                    ErrorAction     = $ErrorActionPreference
+                }
+                $ServicesCheck = Invoke-VMScript @InvokeVMScriptParams 3> $null
 
                 while ($ServicesCheck.ScriptOutput -like 'WARNING: Access denied*') {
                     CheckTimeout -ErrorAction $ErrorActionPreference
@@ -654,8 +693,14 @@ $BootWorker = {
                     Start-Sleep -Seconds 60
 
                     # Run script to check services.
-                    $ServicesCheck = Invoke-VMScript -Server $Configuration.VIServer -VM $VM -ScriptText $ScriptText `
-                        -GuestCredential $VMcreds -ErrorAction $ErrorActionPreference 3> $null
+                    $InvokeVMScriptParams = @{
+                        Server          = $Configuration.VIServer
+                        VM              = $VM
+                        ScriptText      = $ScriptText
+                        GuestCredential = $VMcreds
+                        ErrorAction     = $ErrorActionPreference
+                    }
+                    $ServicesCheck = Invoke-VMScript @InvokeVMScriptParams 3> $null
                 }
 
                 Write-Host "$(Get-Date -Format G): Finished checking services on $($VM.Name)."
@@ -715,6 +760,10 @@ $BootWorker = {
             $stopwatch.Stop()
         }
     }
+
+    end {
+        $global:ProgressPreference = $prevProgressPreference
+    }
 }
 
 $VMTestGroup += $VMs | Where-Object { $_.Guest.HostName -notlike '*.*' }
@@ -732,8 +781,12 @@ $RunspacePool.Open()
 $Jobs = New-Object System.Collections.ArrayList
 
 # Display progress bar
-Write-Progress -Id 1 -Activity 'Creating Runspaces to test credentials' `
-    -Status "Creating runspaces for $VMTestCount VMs." -PercentComplete 0
+$WriteProgressParams = @{
+    Activity        = 'Creating Runspaces to test credentials'
+    Status          = "Creating runspaces for $VMTestCount VMs."
+    PercentComplete = 0
+}
+Write-Progress @WriteProgressParams
 
 $VMindex = 1
 # Create job for each VM
@@ -760,33 +813,31 @@ foreach ($VM in $VMTestGroup) {
     $Activity = "Runspace creation: Processing $VM"
     $Status = "$VMindex/$VMTestCount : $RSPercentComplete Complete"
     $CleanPercent = $RSPercentComplete.Replace('%', '')
-    Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete $CleanPercent
+    Write-Progress -Activity $Activity -Status $Status -PercentComplete $CleanPercent
 
     $VMindex++
 }
 
-Write-Progress -Id 1 -Activity 'Runspace creation to test credentials' -Completed
+Write-Progress -Activity 'Runspace creation to test credentials' -Completed
 
 # Used to determine percentage completed.
 $TotalJobs = $Jobs.Runspace.Count
 
-Write-Progress -Id 2 -Activity 'Testing credentials' -Status 'Verifying credentials' `
-    -PercentComplete 0
+Write-Progress -Activity 'Testing credentials' -Status 'Verifying credentials' -PercentComplete 0
 
 # Update percentage complete and wait until all jobs are finished.
 while ($Jobs.Runspace.IsCompleted -contains $false) {
     $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
-    $PercentComplete = ($CompletedJobs / $TotalJobs).ToString('P')
-    $Status = "$CompletedJobs/$TotalJobs : $PercentComplete Complete"
-    Write-Progress -Id 2 -Activity 'Testing credentials' -Status $Status `
-        -PercentComplete $PercentComplete.Replace('%', '')
+    $PercentComplete = ($CompletedJobs / $TotalJobs) * 100
+    $Status = "$CompletedJobs/$TotalJobs"
+    Write-Progress -Activity 'Testing credentials' -Status $Status -PercentComplete $PercentComplete
     Start-Sleep -Milliseconds 100
 }
 
 # Clean up runspace.
 $RunspacePool.Close()
 
-Write-Progress -Id 2 -Activity 'Testing credentials' -Completed
+Write-Progress -Activity 'Testing credentials' -Completed
 
 if ($Configuration.CredsTest.ContainsValue('FAIL')) {
     # Clean up and exit script
@@ -841,8 +892,12 @@ foreach ($Stage in $Stages) {
         $Jobs = New-Object System.Collections.ArrayList
 
         # Display progress bar
-        Write-Progress -Id 1 -Activity "Creating Runspaces for stage $Stage, group $ShutdownGroup" `
-            -Status "Creating runspaces for $GroupCount VMs." -PercentComplete 0
+        $WriteProgressParams = @{
+            Activity        = "Creating Runspaces for stage $Stage, group $ShutdownGroup"
+            Status          = "Creating runspaces for $GroupCount VMs."
+            PercentComplete = 0
+        }
+        Write-Progress @WriteProgressParams
 
         $VMindex = 1
         # Create job for each VM
@@ -866,39 +921,47 @@ foreach ($Stage in $Stages) {
             }
 
             $null = $Jobs.Add($JobObj)
-            $RSPercentComplete = ($VMindex / $GroupCount).ToString('P')
-            $Activity = "Runspace creation: Processing $VM, Stage $Stage, Group $ShutdownGroup"
-            $Status = "$VMindex/$GroupCount : $RSPercentComplete Complete"
-            $CleanPercent = $RSPercentComplete.Replace('%', '')
-            Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete $CleanPercent
+
+            $WriteProgressParams = @{
+                Activity        = "Runspace creation: Processing $VM, Stage $Stage, Group $ShutdownGroup"
+                Status          = "$VMindex/$GroupCount"
+                PercentComplete = ($VMindex / $GroupCount) * 100
+            }
+            Write-Progress @WriteProgressParams
 
             $VMindex++
         }
 
-        Write-Progress -Id 1 -Activity "Runspace creation for stage $Stage, group $ShutdownGroup" -Completed
+        Write-Progress -Activity "Runspace creation for stage $Stage, group $ShutdownGroup" -Completed
 
         # Used to determine percentage completed.
         $TotalJobs = $Jobs.Runspace.Count
 
-        Write-Progress -Id 2 -Activity "Processing shutdown; Stage $Stage, Group $ShutdownGroup" -Status 'Shutting down.' `
-            -PercentComplete 0
+        $WriteProgressParams = @{
+            Activity        = "Processing shutdown; Stage $Stage, Group $ShutdownGroup"
+            Status          = 'Shutting down.'
+            PercentComplete = 0
+        }
+        Write-Progress @WriteProgressParams
 
         # Update percentage complete and wait until all jobs are finished.
         while ($Jobs.Runspace.IsCompleted -contains $false) {
             $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
-            $PercentComplete = ($CompletedJobs / $TotalJobs).ToString('P')
-            $Status = "Shutting down. $CompletedJobs/$TotalJobs : $PercentComplete Complete"
-            Write-Progress -Id 2 -Activity "Collecting services and shutting down; Stage $stage, Group $ShutdownGroup" `
-                -Status $Status -PercentComplete $PercentComplete.Replace('%', '')
+            $WriteProgressParams = @{
+                Activity        = "Collecting services and shutting down; Stage $stage, Group $ShutdownGroup"
+                Status          = "Shutting down. $CompletedJobs/$TotalJobs"
+                PercentComplete = ($CompletedJobs / $TotalJobs ) * 100
+            }
+            Write-Progress @WriteProgressParams
             Start-Sleep -Milliseconds 100
         }
 
         # Clean up runspace.
         $RunspacePool.Close()
 
-        Write-Progress -Id 2 -Activity "Processing shutdown; Stage $Stage, Group $ShutdownGroup" -Completed
+        Write-Progress -Activity "Processing shutdown; Stage $Stage, Group $ShutdownGroup" -Completed
 
-        Write-Progress -Id 2 -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
+        Write-Progress -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
         $ShutdownList = ($Configuration.Shutdown.GetEnumerator() | Where-Object { $_.Value -eq 'True' }).key | `
                 Where-Object { $GroupMembers.Name -eq $_ }
@@ -908,10 +971,12 @@ foreach ($Stage in $Stages) {
 
             while ($VMGroup.PowerState -contains 'PoweredOn') {
                 $VMsShutdown = ($VMGroup.PowerState -eq 'PoweredOff').Count
-                $PercentComplete = ($VMsShutdown / $GroupCount).ToString('P')
-                $Status = "Waiting for shutdown. $VMsShutdown/$GroupCount : $PercentComplete Complete"
-                Write-Progress -Id 2 -Activity 'Shutdown' -Status $Status `
-                    -PercentComplete $PercentComplete.Replace('%', '')
+                $WriteProgressParams = @{
+                    Activity        = 'Shutdown'
+                    Status          = "Waiting for shutdown. $VMsShutdown/$GroupCount"
+                    PercentComplete = ($VMsShutdown / $GroupCount) * 100
+                }
+                Write-Progress @WriteProgressParams
                 $PoweredOnVMs = $VMGroup | Where-Object { $_.PowerState -eq 'PoweredOn' }
                 Write-Host "$(Get-Date -Format G): Waiting for the following machines to shut down: $PoweredOnVMs" `
                     -BackgroundColor Yellow -ForegroundColor DarkRed
@@ -920,7 +985,7 @@ foreach ($Stage in $Stages) {
             }
         }
 
-        Write-Progress -Id 2 -Activity 'Shutdown' -Completed
+        Write-Progress -Activity 'Shutdown' -Completed
     }
 
     # Write services data to CSV. If manual intervention is needed, user can access this file to check services.
@@ -951,8 +1016,12 @@ foreach ($Stage in $Stages) {
         $Jobs = New-Object System.Collections.ArrayList
 
         # Display progress bar
-        Write-Progress -Id 1 -Activity "Creating Runspaces for stage $Stage, group $BootGroup" `
-            -Status "Creating runspaces for $GroupCount VMs." -PercentComplete 0
+        $WriteProgressParams = @{
+            Activity        = "Creating Runspaces for stage $Stage, group $BootGroup"
+            Status          = "Creating runspaces for $GroupCount VMs."
+            PercentComplete = 0
+        }
+        Write-Progress @WriteProgressParams
 
         $VMIdx = 1
         # Create job for each VM
@@ -980,11 +1049,12 @@ foreach ($Stage in $Stages) {
                 }
 
                 $null = $Jobs.Add($JobObj)
-                $RSPercentComplete = ($VMIdx / $GroupCount).ToString('P')
-                $Activity = "Runspace creation for bootup: Processing $VM, Stage $Stage, Group $BootGroup"
-                $Status = "$VMIdx/$GroupCount : $RSPercentComplete Complete"
-                $CleanPercent = $RSPercentComplete.Replace('%', '')
-                Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete $CleanPercent
+                $WriteProgressParams = @{
+                    Activity        = "Runspace creation for boot: Processing $VM, Stage $Stage, Group $BootGroup"
+                    Status          = "$VMIdx/$GroupCount"
+                    PercentComplete = ($VMIdx / $GroupCount) * 100
+                }
+                Write-Progress @WriteProgressParams
 
                 $VMIdx++
             } else {
@@ -993,27 +1063,29 @@ foreach ($Stage in $Stages) {
             }
         }
 
-        Write-Progress -Id 1 -Activity "Runspace creation for stage $Stage, group $BootGroup" -Completed
+        Write-Progress -Activity "Runspace creation for stage $Stage, boot group $BootGroup" -Completed
 
         # Used to determine percentage completed.
         $TotalJobs = $Jobs.Runspace.Count
 
-        Write-Progress -Id 2 -Activity 'Booting' -Status 'Booting machines.' -PercentComplete 0
+        Write-Progress -Activity 'Booting' -Status 'Booting machines.' -PercentComplete 0
 
         # Update percentage complete and wait until all jobs are finished.
         while ($Jobs.Runspace.IsCompleted -contains $false) {
-            $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
-            $PercentComplete = ($CompletedJobs / $TotalJobs).ToString('P')
-            $Status = "$CompletedJobs/$TotalJobs : $PercentComplete Complete"
-            Write-Progress -Id 2 -Activity "Booting machines; Stage $Stage, Group $BootGroup" -Status $Status `
-                -PercentComplete $PercentComplete.Replace('%', '')
+            $WriteProgressParams = @{
+                Activity        = "Booting machines; Stage $Stage, Group $BootGroup"
+                Status          = "$CompletedJobs/$TotalJobs"
+                PercentComplete = ($CompletedJobs / $TotalJobs) * 100
+            }
+            Write-Progress @WriteProgressParams
+
             Start-Sleep -Milliseconds 100
         }
 
         # Clean up runspace.
         $RunspacePool.Close()
 
-        Write-Progress -Id 2 -Activity 'Booting machines' -Completed
+        Write-Progress -Activity 'Booting machines' -Completed
 
         # Update $VMTable Processed attribute to True if VM was successfully booted.
         foreach ($VM in $VMGroup) {
