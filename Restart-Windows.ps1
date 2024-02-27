@@ -1045,6 +1045,7 @@ foreach ($Stage in $Stages) {
 
                 $JobObj = New-Object -TypeName PSObject -Property @{
                     Runspace   = $PowerShell.BeginInvoke()
+                    Name       = $VM
                     PowerShell = $PowerShell
                 }
 
@@ -1078,6 +1079,18 @@ foreach ($Stage in $Stages) {
                 PercentComplete = ($CompletedJobs / $TotalJobs) * 100
             }
             Write-Progress @WriteProgressParams
+            foreach ($j in $Jobs) {
+                $currtime = Get-Date -Format mm:ss.f
+                $currtime_lastsix = $currtime.Substring($currtime.length - 6, 6)
+                if (($currtime_lastsix -eq '0:00.0'-Or
+                     $currtime_lastsix -eq '0:00.5' -Or
+                     $currtime_lastsix -eq '5:00.0' -Or
+                     $currtime_lastsix -eq '5:00.5') -And -Not $j.Runspace.IsCompleted) {
+                    $msg = "$(Get-Date -Format G): Waiting for services to start on $($j.Name). If five mins "
+                    $msg += "have passed, obtain service list from $ScriptOutput and check the server manually."
+                    Write-Host $msg
+                }
+            }
 
             Start-Sleep -Milliseconds 100
         }
@@ -1152,7 +1165,7 @@ Add-Content -Path $ScriptErrors -Value $Configuration.ScriptErrors
 Write-Host "$(Get-Date -Format G): Script error log saved to $ScriptErrors"
 
 # Deleting services CSV since script completed run
-Remove-Item -Path $ScriptOutput -Force
+# Remove-Item -Path $ScriptOutput -Force
 
 $wshell = New-Object -ComObject Wscript.Shell
 $null = $wshell.Popup("Operation completed for $($Settings.TssFolder) in $elapsedMinutes minutes", 0, 'Done',
