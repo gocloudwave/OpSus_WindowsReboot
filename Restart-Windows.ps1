@@ -246,8 +246,9 @@ try {
     # Disconnect from vCenter
     Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
     $wshell = New-Object -ComObject Wscript.Shell
-    $null = $wshell.Popup("A VM is in the CSV that doesn't exist on the vCenter server. Please check the CSV.",
-        0, 'Exiting', $Buttons.OK + $Icon.Exclamation)
+    $errMsg = "Error Message: $($_.Exception.Message)"
+    $msg = "A VM is in the CSV that doesn't exist on the vCenter server. Please check the CSV. $errMsg"
+    $null = $wshell.Popup($msg, 0, 'Exiting', $Buttons.OK + $Icon.Exclamation)
 
     Exit 1223
 }
@@ -809,11 +810,13 @@ foreach ($VM in $VMTestGroup) {
     }
 
     $null = $Jobs.Add($JobObj)
-    $RSPercentComplete = ($VMindex / $VMTestCount).ToString('P')
-    $Activity = "Runspace creation: Processing $VM"
-    $Status = "$VMindex/$VMTestCount : $RSPercentComplete Complete"
-    $CleanPercent = $RSPercentComplete.Replace('%', '')
-    Write-Progress -Activity $Activity -Status $Status -PercentComplete $CleanPercent
+    $CompletedJobs = $VMindex / $VMTestCount
+    $WriteProgressParams = @{
+        Activity        = "Runspace creation: Processing $VM"
+        Status          = "$VMindex/$VMTestCount"
+        PercentComplete = ($CompletedJobs / $TotalJobs ) * 100
+    }
+    Write-Progress @WriteProgressParams
 
     $VMindex++
 }
@@ -828,9 +831,12 @@ Write-Progress -Activity 'Testing credentials' -Status 'Verifying credentials' -
 # Update percentage complete and wait until all jobs are finished.
 while ($Jobs.Runspace.IsCompleted -contains $false) {
     $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
-    $PercentComplete = ($CompletedJobs / $TotalJobs) * 100
-    $Status = "$CompletedJobs/$TotalJobs"
-    Write-Progress -Activity 'Testing credentials' -Status $Status -PercentComplete $PercentComplete
+    $WriteProgressParams = @{
+        Activity        = 'Testing credentials'
+        Status          = "$CompletedJobs/$TotalJobs"
+        PercentComplete = ($CompletedJobs / $TotalJobs ) * 100
+    }
+    Write-Progress @WriteProgressParams
     Start-Sleep -Milliseconds 100
 }
 
@@ -1073,6 +1079,7 @@ foreach ($Stage in $Stages) {
 
         # Update percentage complete and wait until all jobs are finished.
         while ($Jobs.Runspace.IsCompleted -contains $false) {
+            $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
             $WriteProgressParams = @{
                 Activity        = "Booting machines; Stage $Stage, Group $BootGroup"
                 Status          = "$CompletedJobs/$TotalJobs"
@@ -1082,10 +1089,10 @@ foreach ($Stage in $Stages) {
             foreach ($j in $Jobs) {
                 $currtime = Get-Date -Format mm:ss.f
                 $currtime_lastsix = $currtime.Substring($currtime.length - 6, 6)
-                if (($currtime_lastsix -eq '0:00.0'-Or
-                     $currtime_lastsix -eq '0:00.5' -Or
-                     $currtime_lastsix -eq '5:00.0' -Or
-                     $currtime_lastsix -eq '5:00.5') -And -Not $j.Runspace.IsCompleted) {
+                if (($currtime_lastsix -eq '0:00.0' -Or
+                        $currtime_lastsix -eq '0:00.5' -Or
+                        $currtime_lastsix -eq '5:00.0' -Or
+                        $currtime_lastsix -eq '5:00.5') -And -Not $j.Runspace.IsCompleted) {
                     $msg = "$(Get-Date -Format G): Waiting for services to start on $($j.Name). If five mins "
                     $msg += "have passed, obtain service list from $ScriptOutput and check the server manually."
                     Write-Host $msg
