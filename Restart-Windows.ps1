@@ -814,7 +814,7 @@ foreach ($VM in $VMTestGroup) {
     $WriteProgressParams = @{
         Activity        = "Runspace creation: Processing $VM"
         Status          = "$VMindex/$VMTestCount"
-        PercentComplete = ($CompletedJobs / $TotalJobs ) * 100
+        PercentComplete = ($CompletedJobs / $VMTestGroup.Count ) * 100
     }
     Write-Progress @WriteProgressParams
 
