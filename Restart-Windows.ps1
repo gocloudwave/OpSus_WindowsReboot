@@ -1087,19 +1087,17 @@ foreach ($Stage in $Stages) {
             }
             Write-Progress @WriteProgressParams
             foreach ($j in $Jobs) {
-                $currtime = Get-Date -Format mm:ss.f
-                $currtime_lastsix = $currtime.Substring($currtime.length - 6, 6)
-                if (($currtime_lastsix -eq '0:00.0' -Or
-                        $currtime_lastsix -eq '0:00.5' -Or
-                        $currtime_lastsix -eq '5:00.0' -Or
-                        $currtime_lastsix -eq '5:00.5') -And -Not $j.Runspace.IsCompleted) {
+                $currtime = Get-Date -Format mm:ss
+                $currtime_lastfour = $currtime.Substring($currtime.length - 4, 4)
+                if (($currtime_lastfour -eq '0:00' -Or
+                        $currtime_lastfour -eq '5:00') -And -Not $j.Runspace.IsCompleted) {
                     $msg = "$(Get-Date -Format G): Waiting for services to start on $($j.Name). If five mins "
                     $msg += "have passed, obtain service list from $ScriptOutput and check the server manually."
                     Write-Host $msg
                 }
             }
 
-            Start-Sleep -Milliseconds 100
+            Start-Sleep -Milliseconds 1000
         }
 
         # Clean up runspace.
