@@ -882,6 +882,7 @@ foreach ($Stage in $Stages) {
     $StageTable = $StageTable | Sort-Object -Property ShutdownGroup, Name -CaseSensitive
 
     foreach ($ShutdownGroup in $ShutdownGroups) {
+        Write-Host "Starting Shutdown Group $ShutdownGroup."
         $GroupMembers = $StageTable | Where-Object { $_.ShutdownGroup -ceq $ShutdownGroup }
         $GroupCount = $GroupMembers.Count
         if ($null -eq $GroupCount) { $GroupCount = 1 }
@@ -991,6 +992,8 @@ foreach ($Stage in $Stages) {
             }
         }
 
+        Write-Host "Finished Shutdown Group $ShutdownGroup."
+
         Write-Progress -Activity 'Shutdown' -Completed
     }
 
@@ -1006,6 +1009,7 @@ foreach ($Stage in $Stages) {
     $StageTable = $StageTable | Sort-Object -Property BootGroup, Name -CaseSensitive
 
     foreach ($BootGroup in $BootGroups) {
+        Write-Host "Starting Boot Group $BootGroup."
         $GroupMembers = $StageTable | Where-Object { $_.BootGroup -ceq $BootGroup }
         $GroupCount = $GroupMembers.Count
         if ($null -eq $GroupCount) { $GroupCount = 1 }
@@ -1038,11 +1042,15 @@ foreach ($Stage in $Stages) {
                 Write-Host "$(Get-Date -Format G): Starting $($VM.Name)."
 
                 try {
+                    $prevProgressPreference = $global:ProgressPreference
+                    $global:ProgressPreference = 'SilentlyContinue'
                     $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
                 } catch {
                     Write-Host "$(Get-Date -Format G): Unable to start $($VM.Name)." -BackgroundColor Red `
                         -ForegroundColor Yellow
                     $Configuration.ScriptErrors += "$(Get-Date -Format G): WARNING: Unable to start $($VM.Name)."
+                } finally {
+                    $global:ProgressPreference = $prevProgressPreference
                 }
 
                 $PowerShell = [powershell]::Create()
@@ -1145,6 +1153,7 @@ foreach ($Stage in $Stages) {
                 exit 1223
             }
         }
+        Write-Host "Starting Boot Group $BootGroup."
     }
 
     Write-Host "Completed stage $Stage."
