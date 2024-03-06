@@ -1153,7 +1153,7 @@ foreach ($Stage in $Stages) {
                 exit 1223
             }
         }
-        Write-Host "Starting Boot Group $BootGroup."
+        Write-Host "Finished Boot Group $BootGroup."
     }
 
     Write-Host "Completed stage $Stage."
