@@ -92,9 +92,7 @@ if ($OpenFileDialog.ShowDialog() -eq 'Cancel') {
     Exit 1223
 }
 
-$CSVFilename = $OpenFileDialog.filename
-
-$Settings = Get-Content $CSVFilename -Raw | ConvertFrom-Json
+$Settings = Get-Content $OpenFileDialog.filename -Raw | ConvertFrom-Json
 $Configuration.SvcWhitelist = $Settings.SvcWhitelist
 $Configuration.Timeout = $Settings.Timeout
 
@@ -122,6 +120,8 @@ if ($OpenFileDialog.ShowDialog() -eq 'Cancel') {
 
     Exit 1223
 }
+
+$CSVFilename = $OpenFileDialog.filename
 
 $VMTable = Import-Csv -Path "$($OpenFileDialog.filename)"
 
@@ -233,6 +233,166 @@ function Wait-Stage {
     }
 }
 
+function Invoke-Parallelization {
+    [CmdletBinding()]
+    param (
+        # Servers to process
+        [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName, Position = 0)]
+        [PSObject] $Servers,
+        # Activity message for runspace creation progress bar
+        [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName, Position = 1)]
+        [string] $RunspaceCreationActivity,
+        # Local Machine credentials
+        [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName, Position = 2)]
+        [System.Management.Automation.PSCredential] $LMCreds,
+        # Active Directory credentials
+        [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName, Position = 3)]
+        [System.Management.Automation.PSCredential] $ADCreds,
+        # Worker script block
+        [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName, Position = 4)]
+        [scriptblock] $WorkerScript,
+        # Configuration data
+        [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName, Position = 5)]
+        [hashtable] $Configuration,
+        # Activity messages for worker progress bar
+        [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName, Position = 6)]
+        [string] $WorkerActivity,
+        # Status messages for worker progress bar
+        [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName, Position = 7)]
+        [string] $WorkerStatus,
+        # VM Credentials
+        [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName, Position = 8)]
+        [hashtable] $VMCreds
+    )
+
+    begin {
+        $ServerCount = $Servers.Count
+        if ($null -eq $ServerCount) { $ServerCount = 1 }
+        # Process no more than 25% of the list at once. (Minimum value = 20)
+        $MaxRunspaces = [Math]::Max([Math]::Ceiling($ServerCount / 4), 20)
+
+        # Create runspace pool for parralelization
+        $SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+        $RunspacePool = [RunspaceFactory]::CreateRunspacePool(1, $MaxRunspaces, $SessionState, $Host)
+        $RunspacePool.Open()
+
+        $Jobs = New-Object System.Collections.ArrayList
+        if ($WorkerScript -eq $BootWorker) {
+            $SleepMilliseconds = 1000
+        } else {
+            $SleepMilliseconds = 100
+        }
+    }
+
+    process {
+        # Display progress bar
+        $WriteProgressParams = @{
+            Activity        = $RunspaceCreationActivity
+            Status          = "Creating runspaces for $ServerCount VMs."
+            PercentComplete = 0
+        }
+        Write-Progress @WriteProgressParams
+
+        $VMindex = 1
+        # Create job for each VM
+
+        foreach ($VM in $Servers) {
+            if ($WorkerScript -ne $BootWorker -Or $Configuration.Shutdown[$VM.Name]) {
+                if ($WorkerScript -ne $BootWorker) {
+                    <# $VM is the current item #>
+                    if ($VM.Guest.HostName -notlike '*.*') {
+                        $Creds = $LMCreds
+                    } else {
+                        $Creds = $ADCreds
+                    }
+
+                    if ($WorkerScript -eq $ShutdownWorker) {
+                        # Saving credentials to hashtable because HostName sometimes changes after shutdown.
+                        $VMCreds[$VM.Name] = $Creds
+                    }
+                } elseif ($Configuration.Shutdown[$VM.Name]) {
+                    $Creds = $VMCreds[$VM.Name]
+
+                    try {
+                        $prevProgressPreference = $global:ProgressPreference
+                        $global:ProgressPreference = 'SilentlyContinue'
+                        Write-Host "$(Get-Date -Format G): Starting $($VM.Name)."
+                        $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+                    } catch {
+                        Write-Host "$(Get-Date -Format G): Unable to start $($VM.Name)." -BackgroundColor Red `
+                            -ForegroundColor Yellow
+                        $Configuration.ScriptErrors += "$(Get-Date -Format G): WARNING: Unable to start $($VM.Name)."
+                    } finally {
+                        $global:ProgressPreference = $prevProgressPreference
+                    }
+                }
+
+                $PowerShell = [powershell]::Create()
+                $PowerShell.RunspacePool = $RunspacePool
+                $null = $PowerShell.AddScript($WorkerScript).AddArgument($VM).AddArgument($Creds).AddArgument($Configuration)
+
+                $JobObj = New-Object -TypeName PSObject -Property @{
+                    Runspace   = $PowerShell.BeginInvoke()
+                    PowerShell = $PowerShell
+                }
+
+                $null = $Jobs.Add($JobObj)
+                $CompletedJobs = $VMindex / $ServerCount
+                $WriteProgressParams = @{
+                    Activity        = $RunspaceCreationActivity
+                    Status          = "$VMindex/$ServerCount"
+                    PercentComplete = ($CompletedJobs / $ServerCount ) * 100
+                }
+                Write-Progress @WriteProgressParams
+
+                $VMindex++
+            } else {
+                <# Action when all if and elseif conditions are false #>
+                Write-Host "$(Get-Date -Format G): Skipping $($VM.Name) because it failed during shutdown phase." `
+                    -BackgroundColor DarkRed -ForegroundColor Yellow
+            }
+        }
+
+        Write-Progress -Activity $RunspaceCreationActivity -Completed
+
+        # Used to determine percentage completed.
+        $TotalJobs = $Jobs.Runspace.Count
+
+        Write-Progress -Activity $WorkerActivity -Status $WorkerStatus -PercentComplete 0
+
+        # Update percentage complete and wait until all jobs are finished.
+        while ($Jobs.Runspace.IsCompleted -contains $false) {
+            $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
+            $WriteProgressParams = @{
+                Activity        = $WorkerActivity
+                Status          = "$CompletedJobs/$TotalJobs"
+                PercentComplete = ($CompletedJobs / $TotalJobs ) * 100
+            }
+            Write-Progress @WriteProgressParams
+            if ($WorkerScript -eq $BootWorker) {
+                foreach ($j in $Jobs) {
+                    $currtime = Get-Date -Format mm:ss
+                    $currtime_lastfour = $currtime.Substring($currtime.length - 4, 4)
+                    if (($currtime_lastfour -eq '0:00' -Or
+                            $currtime_lastfour -eq '5:00') -And -Not $j.Runspace.IsCompleted) {
+                        $msg = "$(Get-Date -Format G): Waiting for services to start on $($j.Name). If five mins "
+                        $msg += "have passed, obtain service list from $ScriptOutput and check the server manually."
+                        Write-Host $msg
+                    }
+                }
+            }
+            Start-Sleep -Milliseconds $SleepMilliseconds
+        }
+    }
+
+    end {
+        # Clean up runspace.
+        $RunspacePool.Close()
+
+        Write-Progress -Activity $WorkerStatus -Completed
+    }
+}
+
 # Use invalid certificate action from settings.json
 $null = Set-PowerCLIConfiguration -InvalidCertificateAction $Settings.InvalidCertAction -Scope Session `
     -Confirm:$false
@@ -254,6 +414,7 @@ try {
 }
 
 # Get VM Tools status for all VMs
+# TODO: Verify Tools version is current
 $VMsTools = Get-VMToolsStatus -InputObject $VMs
 foreach ($VM in $VMsTools) {
     if ($VM.UpgradeStatus -ne 'guestToolsCurrent') {
@@ -769,81 +930,21 @@ $BootWorker = {
 
 $VMTestGroup += $VMs | Where-Object { $_.Guest.HostName -notlike '*.*' }
 $VMTestGroup += $VMs | Where-Object { $_.Guest.HostName -like '*.*' } | Get-Random
-$VMTestCount = $VMTestGroup.Count
 
-# Process no more than 25% of the list at once. (Minimum value = 20)
-$MaxRunspaces = [Math]::Max([Math]::Ceiling($VMTestCount / 4), 20)
-
-# Create runspace pool for parralelization
-$SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
-$RunspacePool = [RunspaceFactory]::CreateRunspacePool(1, $MaxRunspaces, $SessionState, $Host)
-$RunspacePool.Open()
-
-$Jobs = New-Object System.Collections.ArrayList
-
-# Display progress bar
-$WriteProgressParams = @{
-    Activity        = 'Creating Runspaces to test credentials'
-    Status          = "Creating runspaces for $VMTestCount VMs."
-    PercentComplete = 0
-}
-Write-Progress @WriteProgressParams
-
-$VMindex = 1
-# Create job for each VM
-
-foreach ($VM in $VMTestGroup) {
-    <# $VM is the current item #>
-    if ($VM.Guest.HostName -notlike '*.*') {
-        $Creds = $LMCreds
-    } else {
-        $Creds = $ADCreds
-    }
-
-    $PowerShell = [powershell]::Create()
-    $PowerShell.RunspacePool = $RunspacePool
-    $null = $PowerShell.AddScript($TestCredentials).AddArgument($VM).AddArgument($Creds).AddArgument($Configuration)
-
-    $JobObj = New-Object -TypeName PSObject -Property @{
-        Runspace   = $PowerShell.BeginInvoke()
-        PowerShell = $PowerShell
-    }
-
-    $null = $Jobs.Add($JobObj)
-    $CompletedJobs = $VMindex / $VMTestCount
-    $WriteProgressParams = @{
-        Activity        = "Runspace creation: Processing $VM"
-        Status          = "$VMindex/$VMTestCount"
-        PercentComplete = ($CompletedJobs / $VMTestGroup.Count ) * 100
-    }
-    Write-Progress @WriteProgressParams
-
-    $VMindex++
+# Test credentials for all VMs
+$TestCredentialsParams = @{
+    Servers                  = $VMTestGroup
+    RunspaceCreationActivity = 'Creating Runspaces to test credentials'
+    LMCreds                  = $LMCreds
+    ADCreds                  = $ADCreds
+    WorkerScript             = $TestCredentials
+    Configuration            = $Configuration
+    WorkerActivity           = 'Testing credentials'
+    WorkerStatus             = 'Verifying credentials'
+    VMCreds                  = $VMCreds
 }
 
-Write-Progress -Activity 'Runspace creation to test credentials' -Completed
-
-# Used to determine percentage completed.
-$TotalJobs = $Jobs.Runspace.Count
-
-Write-Progress -Activity 'Testing credentials' -Status 'Verifying credentials' -PercentComplete 0
-
-# Update percentage complete and wait until all jobs are finished.
-while ($Jobs.Runspace.IsCompleted -contains $false) {
-    $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
-    $WriteProgressParams = @{
-        Activity        = 'Testing credentials'
-        Status          = "$CompletedJobs/$TotalJobs"
-        PercentComplete = ($CompletedJobs / $TotalJobs ) * 100
-    }
-    Write-Progress @WriteProgressParams
-    Start-Sleep -Milliseconds 100
-}
-
-# Clean up runspace.
-$RunspacePool.Close()
-
-Write-Progress -Activity 'Testing credentials' -Completed
+Invoke-Parallelization @TestCredentialsParams
 
 if ($Configuration.CredsTest.ContainsValue('FAIL')) {
     # Clean up and exit script
@@ -883,95 +984,31 @@ foreach ($Stage in $Stages) {
 
     foreach ($ShutdownGroup in $ShutdownGroups) {
         Write-Host "Starting Shutdown Group $ShutdownGroup."
-        $GroupMembers = $StageTable | Where-Object { $_.ShutdownGroup -ceq $ShutdownGroup }
-        $GroupCount = $GroupMembers.Count
-        if ($null -eq $GroupCount) { $GroupCount = 1 }
-        $VMGroup = $VMs | Where-Object { $GroupMembers.Name -eq $_.Name }
+        # $VMGroup = $VMs | Where-Object {
+        #     ($StageTable.ShutdownGroup -ceq $ShutdownGroup) -and ($StageTable.Name -eq $_.Name) }
+        $VMGroup = $VMs | Where-Object { $_.Name -in (
+                $StageTable | Where-Object { $_.ShutdownGroup -ceq $ShutdownGroup }).Name }
 
-        # Process no more than 25% of the list at once. (Minimum value = 20)
-        $MaxRunspaces = [Math]::Max([Math]::Ceiling($GroupCount / 4), 20)
+        # Shutdown Parameters
+        $ShutdownParams = @{
+            Servers                  = $VMGroup
+            RunspaceCreationActivity = "Creating Runspaces for stage $Stage, Group $ShutdownGroup"
+            LMCreds                  = $LMCreds
+            ADCreds                  = $ADCreds
+            WorkerScript             = $ShutdownWorker
+            Configuration            = $Configuration
+            WorkerActivity           = "Collecting services and shutting down; Stage $stage, Group $ShutdownGroup"
+            WorkerStatus             = 'Shutting down.'
+            VMCreds                  = $VMCreds
 
-        # Create runspace pool for parralelization
-        $SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
-        $RunspacePool = [RunspaceFactory]::CreateRunspacePool(1, $MaxRunspaces, $SessionState, $Host)
-        $RunspacePool.Open()
-
-        $Jobs = New-Object System.Collections.ArrayList
-
-        # Display progress bar
-        $WriteProgressParams = @{
-            Activity        = "Creating Runspaces for stage $Stage, group $ShutdownGroup"
-            Status          = "Creating runspaces for $GroupCount VMs."
-            PercentComplete = 0
-        }
-        Write-Progress @WriteProgressParams
-
-        $VMindex = 1
-        # Create job for each VM
-        foreach ($VM in $VMGroup) {
-            if ($VM.Guest.HostName -notlike '*.*') {
-                $Creds = $LMCreds
-            } else {
-                $Creds = $ADCreds
-            }
-
-            # Saving credentials to hashtable because HostName sometimes changes after shutdown.
-            $VMCreds[$VM.Name] = $Creds
-
-            $PowerShell = [powershell]::Create()
-            $PowerShell.RunspacePool = $RunspacePool
-            $null = $PowerShell.AddScript($ShutdownWorker).AddArgument($VM).AddArgument($Creds).AddArgument($Configuration)
-
-            $JobObj = New-Object -TypeName PSObject -Property @{
-                Runspace   = $PowerShell.BeginInvoke()
-                PowerShell = $PowerShell
-            }
-
-            $null = $Jobs.Add($JobObj)
-
-            $WriteProgressParams = @{
-                Activity        = "Runspace creation: Processing $VM, Stage $Stage, Group $ShutdownGroup"
-                Status          = "$VMindex/$GroupCount"
-                PercentComplete = ($VMindex / $GroupCount) * 100
-            }
-            Write-Progress @WriteProgressParams
-
-            $VMindex++
         }
 
-        Write-Progress -Activity "Runspace creation for stage $Stage, group $ShutdownGroup" -Completed
-
-        # Used to determine percentage completed.
-        $TotalJobs = $Jobs.Runspace.Count
-
-        $WriteProgressParams = @{
-            Activity        = "Processing shutdown; Stage $Stage, Group $ShutdownGroup"
-            Status          = 'Shutting down.'
-            PercentComplete = 0
-        }
-        Write-Progress @WriteProgressParams
-
-        # Update percentage complete and wait until all jobs are finished.
-        while ($Jobs.Runspace.IsCompleted -contains $false) {
-            $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
-            $WriteProgressParams = @{
-                Activity        = "Collecting services and shutting down; Stage $stage, Group $ShutdownGroup"
-                Status          = "Shutting down. $CompletedJobs/$TotalJobs"
-                PercentComplete = ($CompletedJobs / $TotalJobs ) * 100
-            }
-            Write-Progress @WriteProgressParams
-            Start-Sleep -Milliseconds 100
-        }
-
-        # Clean up runspace.
-        $RunspacePool.Close()
-
-        Write-Progress -Activity "Processing shutdown; Stage $Stage, Group $ShutdownGroup" -Completed
+        Invoke-Parallelization @ShutdownParams
 
         Write-Progress -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
         $ShutdownList = ($Configuration.Shutdown.GetEnumerator() | Where-Object { $_.Value -eq 'True' }).key | `
-                Where-Object { $GroupMembers.Name -eq $_ }
+                Where-Object { $VMGroup.Name -eq $_ }
         if ($ShutdownList) {
             $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
             $GroupCount = $VMGroup.Count
@@ -1010,108 +1047,24 @@ foreach ($Stage in $Stages) {
 
     foreach ($BootGroup in $BootGroups) {
         Write-Host "Starting Boot Group $BootGroup."
-        $GroupMembers = $StageTable | Where-Object { $_.BootGroup -ceq $BootGroup }
-        $GroupCount = $GroupMembers.Count
-        if ($null -eq $GroupCount) { $GroupCount = 1 }
-        $VMGroup = $VMs | Where-Object { $GroupMembers.Name -eq $_.Name }
 
-        # Process no more than 25% of the list at once. (Minimum value = 20)
-        $MaxRunspaces = [Math]::Max([Math]::Ceiling($GroupCount / 4), 20)
+        $VMGroup = $VMs | Where-Object { $_.Name -in (
+                $StageTable | Where-Object { $_.BootGroup -ceq $BootGroup }).Name }
 
-        # Create runspace pool for parralelization
-        $SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
-        $RunspacePool = [RunspaceFactory]::CreateRunspacePool(1, $MaxRunspaces, $SessionState, $Host)
-        $RunspacePool.Open()
-
-        $Jobs = New-Object System.Collections.ArrayList
-
-        # Display progress bar
-        $WriteProgressParams = @{
-            Activity        = "Creating Runspaces for stage $Stage, group $BootGroup"
-            Status          = "Creating runspaces for $GroupCount VMs."
-            PercentComplete = 0
-        }
-        Write-Progress @WriteProgressParams
-
-        $VMIdx = 1
-        # Create job for each VM
-        foreach ($VM in $VMGroup) {
-            if ($Configuration.Shutdown[$VM.Name]) {
-                # Using previously calculated credentials from shutdown job.
-                $Creds = $VMCreds[$VM.Name]
-                Write-Host "$(Get-Date -Format G): Starting $($VM.Name)."
-
-                try {
-                    $prevProgressPreference = $global:ProgressPreference
-                    $global:ProgressPreference = 'SilentlyContinue'
-                    $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
-                } catch {
-                    Write-Host "$(Get-Date -Format G): Unable to start $($VM.Name)." -BackgroundColor Red `
-                        -ForegroundColor Yellow
-                    $Configuration.ScriptErrors += "$(Get-Date -Format G): WARNING: Unable to start $($VM.Name)."
-                } finally {
-                    $global:ProgressPreference = $prevProgressPreference
-                }
-
-                $PowerShell = [powershell]::Create()
-                $PowerShell.RunspacePool = $RunspacePool
-                $null = $PowerShell.AddScript($BootWorker).AddArgument($VM).AddArgument($Creds).AddArgument($Configuration)
-
-                $JobObj = New-Object -TypeName PSObject -Property @{
-                    Runspace   = $PowerShell.BeginInvoke()
-                    Name       = $VM
-                    PowerShell = $PowerShell
-                }
-
-                $null = $Jobs.Add($JobObj)
-                $WriteProgressParams = @{
-                    Activity        = "Runspace creation for boot: Processing $VM, Stage $Stage, Group $BootGroup"
-                    Status          = "$VMIdx/$GroupCount"
-                    PercentComplete = ($VMIdx / $GroupCount) * 100
-                }
-                Write-Progress @WriteProgressParams
-
-                $VMIdx++
-            } else {
-                Write-Host "$(Get-Date -Format G): Skipping $($VM.Name) because it failed during shutdown phase." `
-                    -BackgroundColor DarkRed -ForegroundColor Yellow
-            }
+        # Boot Parameters
+        $BootParams = @{
+            Servers                  = $VMGroup
+            RunspaceCreationActivity = "Creating Runspaces for stage $Stage, Group $BootGroup"
+            LMCreds                  = $LMCreds
+            ADCreds                  = $ADCreds
+            WorkerScript             = $BootWorker
+            Configuration            = $Configuration
+            WorkerActivity           = "Booting machines; Stage $Stage, Group $BootGroup"
+            WorkerStatus             = 'Booting machines.'
+            VMCreds                  = $VMCreds
         }
 
-        Write-Progress -Activity "Runspace creation for stage $Stage, boot group $BootGroup" -Completed
-
-        # Used to determine percentage completed.
-        $TotalJobs = $Jobs.Runspace.Count
-
-        Write-Progress -Activity 'Booting' -Status 'Booting machines.' -PercentComplete 0
-
-        # Update percentage complete and wait until all jobs are finished.
-        while ($Jobs.Runspace.IsCompleted -contains $false) {
-            $CompletedJobs = ($Jobs.Runspace.IsCompleted -eq $true).Count
-            $WriteProgressParams = @{
-                Activity        = "Booting machines; Stage $Stage, Group $BootGroup"
-                Status          = "$CompletedJobs/$TotalJobs"
-                PercentComplete = ($CompletedJobs / $TotalJobs) * 100
-            }
-            Write-Progress @WriteProgressParams
-            foreach ($j in $Jobs) {
-                $currtime = Get-Date -Format mm:ss
-                $currtime_lastfour = $currtime.Substring($currtime.length - 4, 4)
-                if (($currtime_lastfour -eq '0:00' -Or
-                        $currtime_lastfour -eq '5:00') -And -Not $j.Runspace.IsCompleted) {
-                    $msg = "$(Get-Date -Format G): Waiting for services to start on $($j.Name). If five mins "
-                    $msg += "have passed, obtain service list from $ScriptOutput and check the server manually."
-                    Write-Host $msg
-                }
-            }
-
-            Start-Sleep -Milliseconds 1000
-        }
-
-        # Clean up runspace.
-        $RunspacePool.Close()
-
-        Write-Progress -Activity 'Booting machines' -Completed
+        Invoke-Parallelization @BootParams
 
         # Update $VMTable Processed attribute to True if VM was successfully booted.
         foreach ($VM in $VMGroup) {
@@ -1121,13 +1074,15 @@ foreach ($Stage in $Stages) {
             }
         }
 
+        $BootGroupFailures = $Configuration.BootFailure | Where-Object { $VMGroup.Name -eq $_ }
+
         # Check for Boot Failures
-        if ($Configuration.BootFailure) {
+        if ($BootGroupFailures) {
             # Ask user if they want to continue
             $wshell = New-Object -ComObject Wscript.Shell
-            $ButtonClicked = $wshell.Popup("Unable to boot the following VMs: $($Configuration.BootFailure)",
-                0, 'Boot Timeout Error', $Buttons.OKCancel + $Icon.Exclamation)
-            if ($ButtonClicked -eq $Selection.Cancel) {
+            $msg = "Unable to boot the following VMs: $BootGroupFailures. Continue script?"
+            $ButtonClicked = $wshell.Popup($msg, 0, 'Boot Timeout Error', $Buttons.YesNo + $Icon.Question)
+            if ($ButtonClicked -eq $Selection.No) {
                 # Write new VM list with added Processed flag to CSV
                 $newCSVFilename = "$CSVFilename.new"
                 if (Test-Path -Path $newCSVFilename -PathType leaf) { Clear-Content -Path $newCSVFilename }
