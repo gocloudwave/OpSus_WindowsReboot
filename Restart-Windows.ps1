@@ -78,21 +78,10 @@ Import-Module -Name VMware.PowerCLI -MinimumVersion 13.1.0.21624340 -Force -NoCl
 Import-Module -Name Thycotic.SecretServer -RequiredVersion 0.61.0 -Force -NoClobber
 
 # Prompt user for JSON file with settings
-[System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null
+$SettingsFile = Get-FileName -initialDirectory $PSScriptRoot -title 'Select JSON file with customer settings' `
+    -filter 'JavaScript Object Notation files (*.json)|*.json'
 
-$OpenFileDialog = New-Object System.Windows.Forms.OpenFileDialog
-$OpenFileDialog.initialDirectory = $PSScriptRoot
-$OpenFileDialog.title = 'Select JSON file with customer settings'
-$OpenFileDialog.filter = 'JavaScript Object Notation files (*.json)|*.json'
-if ($OpenFileDialog.ShowDialog() -eq 'Cancel') {
-    $wshell = New-Object -ComObject Wscript.Shell
-    $null = $wshell.Popup('User canceled file selection. Exiting script.', 0, 'Exiting', `
-            $Buttons.OK + $Icon.Exclamation)
-
-    Exit 1223
-}
-
-$Settings = Get-Content $OpenFileDialog.filename -Raw | ConvertFrom-Json
+$Settings = Get-Content $SettingsFile -Raw | ConvertFrom-Json
 $Configuration.SvcWhitelist = $Settings.SvcWhitelist
 $Configuration.Timeout = $Settings.Timeout
 
@@ -107,23 +96,10 @@ if ($Settings.TssFolder) {
 if ($null -eq $ButtonClicked -or $ButtonClicked -eq $Selection.No) { Exit 1223 }
 
 # Prompt user for CSV with VMs, Process, BootGroup, and (optionally) ShutdownGroup
-[System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null
+$CSVFilename = Get-FileName -initialDirectory $PSScriptRoot -title 'Select CSV file with VM names and processing order' `
+    -filter 'Comma-delimited files (*.csv)|*.csv'
 
-$OpenFileDialog = New-Object System.Windows.Forms.OpenFileDialog
-$OpenFileDialog.initialDirectory = $PSScriptRoot
-$OpenFileDialog.title = 'Select CSV file with VM names and processing order'
-$OpenFileDialog.filter = 'Comma-delimited files (*.csv)|*.csv'
-if ($OpenFileDialog.ShowDialog() -eq 'Cancel') {
-    $wshell = New-Object -ComObject Wscript.Shell
-    $null = $wshell.Popup('User canceled file selection. Exiting script.', 0, 'Exiting', `
-            $Buttons.OK + $Icon.Exclamation)
-
-    Exit 1223
-}
-
-$CSVFilename = $OpenFileDialog.filename
-
-$VMTable = Import-Csv -Path "$($OpenFileDialog.filename)"
+$VMTable = Import-Csv -Path "$CSVFilename"
 
 # Exit script if required fields are not present
 if (![bool]($VMTable | Get-Member -Name Name) -or ![bool]($VMTable | Get-Member -Name Process) `
@@ -413,21 +389,12 @@ try {
     Exit 1223
 }
 
-# Get VM Tools status for all VMs
-# TODO: Verify Tools version is current
-$VMsTools = Get-VMToolsStatus -InputObject $VMs
-foreach ($VM in $VMsTools) {
-    if ($VM.UpgradeStatus -ne 'guestToolsCurrent') {
-        $msg = ("$(Get-Date -Format G): WARNING: The version of VMware Tools on VM '$($VM.Name)' is out of " +
-            'date and may cause the script to work improperly.')
-        $Configuration.ScriptErrors += $msg
-        if ($VM.Status -eq 'guestToolsNotRunning') {
-            $msg = ("$(Get-Date -Format G): WARNING: VMware Tools NOT running on '$($VM.Name)'. Stopping VM " +
-                'instead of shutting down.')
-            $Configuration.ScriptErrors += $msg
-        }
-    }
-}
+$Configuration.VMToolsDesiredVersion = Enter-StringDialogBox -Title 'VMware Tools' `
+    -Prompt 'What version of VMware Tools should be installed?'
+
+# Prompt user for path to VMware Tools executable
+$Configuration.VMToolsExecutablePath = Get-FileName -initialDirectory $PSScriptRoot `
+    -title 'Select VMware Tools executable file' -filter 'Executable files (*.exe)|*.exe'
 
 # Prompt for Thycotic credentials
 $ThycoticCreds = $null
@@ -470,7 +437,8 @@ if ($ButtonClicked -eq $Selection.Cancel) {
         $TssFolder = $TssFolders
     } else {
         $Prompt = "Please select the Secret Folder (found $($TssFolders.Count)):"
-        $TssFolderName = myDialogBox -Title 'Select a folder:' -Prompt $Prompt -Values $TssFolders.FolderName
+        $TssFolderName = Select-SingleOptionDialogBox -Title 'Select a folder:' `
+            -Prompt $Prompt -Values $TssFolders.FolderName
 
         if ($TssFolderName) {
             $TssFolder = $TssFolders | Where-Object { $_.FolderName -eq $TssFolderName }
@@ -497,14 +465,15 @@ if ($ButtonClicked -eq $Selection.Cancel) {
 
     # Select Domain Admin secret
     if ($ADSecrets) {
-        $ADSecretName = myDialogBox -Title 'Select a secret' -Prompt 'Please select the Domain Admin Secret:' `
-            -Values $ADSecrets.SecretName
+        $ADSecretName = Select-SingleOptionDialogBox -Title 'Select a secret' `
+            -Prompt 'Please select the Domain Admin Secret:' -Values $ADSecrets.SecretName
     }
 
     # Select Local Admin secret
     if ($LMSecrets) {
         $Prompt = 'Please select the Local Machine Admin Secret:'
-        $LMSecretName = myDialogBox -Title 'Select a secret' -Prompt $Prompt -Values $LMSecrets.SecretName
+        $LMSecretName = Select-SingleOptionDialogBox -Title 'Select a secret' `
+            -Prompt $Prompt -Values $LMSecrets.SecretName
     }
 
     # Obtain Domain Admin credentials
@@ -634,6 +603,12 @@ $ShutdownWorker = {
         $ScriptText = ("try { Get-Service -Include $SvcWhitelist -ErrorAction Stop | Where-Object { " +
             '$_.StartType -eq "Automatic" -and $_.Status -eq "Running" } | Format-Table -Property Name ' +
             '-HideTableHeaders } catch { Write-Warning "Access denied" }')
+        $TempPath = 'C:\Temp\'
+        $VMToolsExecutable = Split-Path $Configuration.VMToolsExecutablePath -Leaf
+        $VMToolsInstallationScript = ("$TempPath\$VMToolsExecutable /S /v " + '"/qn REBOOT=R ADDLOCAL=ALL ' +
+            'REMOVE=Hgfs"')
+        $PostVMToolsInstallationScript = ("Remove-Item -Path '$TempPath\$VMToolsExecutable' -Force; " +
+            'Clear-RecycleBin -Confirm:$False')
         $prevProgressPreference = $global:ProgressPreference
     }
 
@@ -700,6 +675,54 @@ $ShutdownWorker = {
                             Write-Host $msg -BackgroundColor Magenta -ForegroundColor Cyan
                         }
                     }
+                }
+
+                if ($VM.ExtensionData.Guest.toolsVersion -ne $Configuration.VMToolsDesiredVersion) {
+                    Write-Host "$(Get-Date -Format G): Upgrading VMware Tools on $($VM.Name)."
+                    # Copy VMtools executable to VM
+                    $CopyVMGuestFileParams = @{
+                        Server          = $Configuration.VIServer
+                        Source          = $Configuration.VMToolsExecutablePath
+                        Destination     = 'C:\Temp\'
+                        VM              = $VM
+                        GuestCredential = $VMcreds
+                        LocalToGuest    = $true
+                        Force           = $true
+                        ErrorAction     = $ErrorActionPreference
+                    }
+                    Copy-VMGuestFile @CopyVMGuestFileParams 3> $null
+
+                    # Install VMtools
+                    $InvokeVMScriptParams = @{
+                        Server          = $Configuration.VIServer
+                        VM              = $VM
+                        ScriptText      = $VMToolsInstallationScript
+                        GuestCredential = $VMcreds
+                        ErrorAction     = 'SilentlyContinue' # Connectivity to guest VM drops when upgrading tools
+                    }
+                    $null = Invoke-VMScript @InvokeVMScriptParams 3> $null
+
+                    $SleepSeconds = 5
+                    $Timeout = 300
+                    $ElapsedTime = 0
+                    while ($ElapsedTime -lt $Timeout) {
+                        $VM = Get-VM -Name $VM.Name -Server $Configuration.VIServer
+                        if ($VM.ExtensionData.Guest.toolsVersion -eq $Configuration.VMToolsDesiredVersion) {
+                            break
+                        }
+                        $ElapsedTime += $SleepSeconds
+                        Start-Sleep -Seconds $SleepSeconds
+                    }
+
+                    # Post VMtools installation cleanup
+                    $InvokeVMScriptParams = @{
+                        Server          = $Configuration.VIServer
+                        VM              = $VM
+                        ScriptText      = $PostVMToolsInstallationScript
+                        GuestCredential = $VMcreds
+                        ErrorAction     = $ErrorActionPreference
+                    }
+                    $null = Invoke-VMScript @InvokeVMScriptParams 3> $null
                 }
 
                 if ($VM.ExtensionData.Guest.toolsRunningStatus -ne 'guestToolsNotRunning') {
@@ -798,7 +821,7 @@ $BootWorker = {
         # running.
         if ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name }) {
             $ServerServices = ($Configuration.Services | Where-Object { $_.VM -eq $VM.Name -and
-                    $_ServiceName -notmatch '^MEDITECH UNV ' }).ServiceName
+                    $_.ServiceName -notmatch '^MEDITECH\sUNV\s.*' }).ServiceName
         }
 
         $ServiceList = "'$($ServerServices -join "','")'"
@@ -928,6 +951,76 @@ $BootWorker = {
     }
 }
 
+# Script block to parallelize collecting VM data and shutting down the VM
+$RebootWorker = {
+    [CmdletBinding()]
+    param (
+        # Name of the VM
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 0)]
+        [ValidateNotNullOrEmpty()]
+        [VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine]
+        $VM,
+
+        # Credentials to use for this VM
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 1)]
+        [ValidateNotNullOrEmpty()]
+        [System.Management.Automation.PSCredential]
+        $VMCreds,
+
+        # Hash table for configuration data
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, Position = 2)]
+        [ValidateNotNullOrEmpty()]
+        [hashtable]
+        $Configuration
+    )
+
+    begin {
+        $ErrorActionPreference = 'Stop'
+        $Error.Clear()
+
+        $prevProgressPreference = $global:ProgressPreference
+
+        function CheckTimeout {
+            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.Timeout) {
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.Timeout) " +
+                'minutes. Logging.'
+                throw [System.TimeoutException] $msg
+            }
+        }
+    }
+
+    process {
+        $global:ProgressPreference = 'SilentlyContinue'
+        if ($VM.ExtensionData.Guest.toolsRunningStatus -ne 'guestToolsNotRunning') {
+            Write-Host "$(Get-Date -Format G): Shutting down $($VM.Name)."
+            $VM = Stop-VMGuest -VM $VM -Server $Configuration.VIServer -Confirm:$false
+        } else {
+            Write-Host "$(Get-Date -Format G): Stopping $($VM.Name)."
+            $VM = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
+        }
+
+        while ($VM.PowerState -eq 'PoweredOn') {
+            Start-Sleep -Milliseconds 1000
+            $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+        }
+
+        $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+
+        while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
+            CheckTimeout -ErrorAction $ErrorActionPreference
+            # Give the machine time before attempting login after boot up
+            Write-Host "$(Get-Date -Format G): $($VM.Name) does not have a DNS name yet. Waiting 30 seconds."
+            Start-Sleep -Seconds 30
+            $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+        }
+    }
+
+    end {
+        $global:ProgressPreference = $prevProgressPreference
+    }
+}
+
+
 $VMTestGroup += $VMs | Where-Object { $_.Guest.HostName -notlike '*.*' }
 $VMTestGroup += $VMs | Where-Object { $_.Guest.HostName -like '*.*' } | Get-Random
 
@@ -984,20 +1077,18 @@ foreach ($Stage in $Stages) {
 
     foreach ($ShutdownGroup in $ShutdownGroups) {
         Write-Host "Starting Shutdown Group $ShutdownGroup."
-        # $VMGroup = $VMs | Where-Object {
-        #     ($StageTable.ShutdownGroup -ceq $ShutdownGroup) -and ($StageTable.Name -eq $_.Name) }
-        $VMGroup = $VMs | Where-Object { $_.Name -in (
+        $ShutdownServers = $VMs | Where-Object { $_.Name -in (
                 $StageTable | Where-Object { $_.ShutdownGroup -ceq $ShutdownGroup }).Name }
 
         # Shutdown Parameters
         $ShutdownParams = @{
-            Servers                  = $VMGroup
+            Servers                  = $ShutdownServers
             RunspaceCreationActivity = "Creating Runspaces for stage $Stage, Group $ShutdownGroup"
             LMCreds                  = $LMCreds
             ADCreds                  = $ADCreds
             WorkerScript             = $ShutdownWorker
             Configuration            = $Configuration
-            WorkerActivity           = "Collecting services and shutting down; Stage $stage, Group $ShutdownGroup"
+            WorkerActivity           = "Collecting services and shutting down; Stage $Stage, Group $ShutdownGroup"
             WorkerStatus             = 'Shutting down.'
             VMCreds                  = $VMCreds
 
@@ -1008,24 +1099,24 @@ foreach ($Stage in $Stages) {
         Write-Progress -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
         $ShutdownList = ($Configuration.Shutdown.GetEnumerator() | Where-Object { $_.Value -eq 'True' }).key | `
-                Where-Object { $VMGroup.Name -eq $_ }
+                Where-Object { $ShutdownServers.Name -eq $_ }
         if ($ShutdownList) {
-            $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
-            $GroupCount = $VMGroup.Count
+            $AwaitingShutdown = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
+            $GroupCount = $AwaitingShutdown.Count
 
-            while ($VMGroup.PowerState -contains 'PoweredOn') {
-                $VMsShutdown = ($VMGroup.PowerState -eq 'PoweredOff').Count
+            while ($AwaitingShutdown.PowerState -contains 'PoweredOn') {
+                $VMsShutdown = ($AwaitingShutdown.PowerState -eq 'PoweredOff').Count
                 $WriteProgressParams = @{
                     Activity        = 'Shutdown'
                     Status          = "Waiting for shutdown. $VMsShutdown/$GroupCount"
                     PercentComplete = ($VMsShutdown / $GroupCount) * 100
                 }
                 Write-Progress @WriteProgressParams
-                $PoweredOnVMs = $VMGroup | Where-Object { $_.PowerState -eq 'PoweredOn' }
+                $PoweredOnVMs = $AwaitingShutdown | Where-Object { $_.PowerState -eq 'PoweredOn' }
                 Write-Host "$(Get-Date -Format G): Waiting for the following machines to shut down: $PoweredOnVMs" `
                     -BackgroundColor Yellow -ForegroundColor DarkRed
                 Start-Sleep -Milliseconds 1000
-                $VMGroup = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
+                $AwaitingShutdown = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
             }
         }
 
@@ -1038,7 +1129,7 @@ foreach ($Stage in $Stages) {
     if (Test-Path -Path $ScriptOutput -PathType leaf) { Clear-Content -Path $ScriptOutput }
     $Configuration.Services | Export-Csv -Path $ScriptOutput -NoTypeInformation -Force
     if (Test-Path -Path $UnvOutput -PathType leaf) { Clear-Content -Path $UnvOutput }
-    $Congifuration.Services | Where-Object { $_.ServiceName -match '^MEDITECH UNV ' } | `
+    $Congifuration.Services | Where-Object { $_.ServiceName -match '^MEDITECH\sUNV\s.*' } | `
             Export-Csv -Path $UnvOutput -NoTypeInformation -Force
 
     Write-Host "$(Get-Date -Format G): Services list saved to $ScriptOutput"
@@ -1048,12 +1139,12 @@ foreach ($Stage in $Stages) {
     foreach ($BootGroup in $BootGroups) {
         Write-Host "Starting Boot Group $BootGroup."
 
-        $VMGroup = $VMs | Where-Object { $_.Name -in (
+        $BootingServers = $VMs | Where-Object { $_.Name -in (
                 $StageTable | Where-Object { $_.BootGroup -ceq $BootGroup }).Name }
 
         # Boot Parameters
         $BootParams = @{
-            Servers                  = $VMGroup
+            Servers                  = $BootingServers
             RunspaceCreationActivity = "Creating Runspaces for stage $Stage, Group $BootGroup"
             LMCreds                  = $LMCreds
             ADCreds                  = $ADCreds
@@ -1067,14 +1158,14 @@ foreach ($Stage in $Stages) {
         Invoke-Parallelization @BootParams
 
         # Update $VMTable Processed attribute to True if VM was successfully booted.
-        foreach ($VM in $VMGroup) {
+        foreach ($VM in $BootingServers) {
             $VMToUpdate = $VMTable | Where-Object { $_.Name -eq $VM.Name }
             if ($VM.Name -notin $Configuration.BootFailure -and $Configuration.Shutdown[$VM.Name]) {
                 $VMToUpdate.Processed = $true
             }
         }
 
-        $BootGroupFailures = $Configuration.BootFailure | Where-Object { $VMGroup.Name -eq $_ }
+        $BootGroupFailures = $Configuration.BootFailure | Where-Object { $BootingServers.Name -eq $_ }
 
         # Check for Boot Failures
         if ($BootGroupFailures) {
