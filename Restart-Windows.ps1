@@ -78,6 +78,8 @@ $VMTestGroup = @()
 Import-Module -Name VMware.PowerCLI -MinimumVersion 13.1.0.21624340 -Force -NoClobber
 Import-Module -Name Thycotic.SecretServer -RequiredVersion 0.61.0 -Force -NoClobber
 
+. "$PSScriptRoot\User-Prompts.ps1"
+
 # Prompt user for JSON file with settings
 $SettingsFile = Get-FileName -initialDirectory $PSScriptRoot -title 'Select JSON file with customer settings' `
     -filter 'JavaScript Object Notation files (*.json)|*.json'
@@ -180,7 +182,6 @@ if ($Env:USERDNSDOMAIN -ne $Settings.DNSDomain) {
 . "$PSScriptRoot\Search-TssFolders.ps1"
 . "$PSScriptRoot\Get-UserCredentials.ps1"
 . "$PSScriptRoot\Get-VMToolsStatus.ps1"
-. "$PSScriptRoot\User-Prompts.ps1"
 
 # Function to wait between stages
 function Wait-Stage {
