@@ -65,6 +65,7 @@ $Configuration.Shutdown = @{}
 $Configuration.BootFailure = @()
 $Configuration.VIServer = $null
 $Configuration.CredsTest = @{}
+$Configuration.InterimProcess = 'Reboot'
 
 $ButtonClicked = $null
 $ADCreds = $null
@@ -282,7 +283,7 @@ function Invoke-Parallelization {
                         $Creds = $ADCreds
                     }
 
-                    if ($WorkerScript -eq $ShutdownWorker) {
+                    if ($WorkerScript -eq $FirstRebootWorker) {
                         # Saving credentials to hashtable because HostName sometimes changes after shutdown.
                         $VMCreds[$VM.Name] = $Creds
                     }
@@ -572,8 +573,8 @@ $TestCredentials = {
 
 }
 
-# Script block to parallelize collecting VM data and shutting down the VM
-$ShutdownWorker = {
+# Script block to parallelize collecting VM data and rebooting the VM
+$FirstRebootWorker = {
     [CmdletBinding()]
     param (
         # Name of the VM
@@ -733,6 +734,22 @@ $ShutdownWorker = {
                     $null = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
                 }
                 $Configuration.Shutdown[$VM.Name] = $true
+
+                while ($VM.PowerState -eq 'PoweredOn') {
+                    Start-Sleep -Seconds 30
+                    Write-Host "$(Get-Date -Format G): Waiting for $($VM.Name) to shut down."
+                    $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+                }
+
+                $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+
+                while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
+                    CheckTimeout -ErrorAction $ErrorActionPreference
+                    # Give the machine time before attempting login after boot up
+                    Write-Host "$(Get-Date -Format G): $($VM.Name) does not have a DNS name yet. Waiting 30 seconds."
+                    Start-Sleep -Seconds 30
+                    $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+                }
 
             }
         } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
@@ -952,7 +969,7 @@ $BootWorker = {
 }
 
 # Script block to parallelize collecting VM data and shutting down the VM
-$RebootWorker = {
+$InterimWorker = {
     [CmdletBinding()]
     param (
         # Name of the VM
@@ -1004,14 +1021,16 @@ $RebootWorker = {
             $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
         }
 
-        $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+        if ($Configuration.InterimProcessing -eq 'Reboot') {
+            $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
 
-        while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
-            CheckTimeout -ErrorAction $ErrorActionPreference
-            # Give the machine time before attempting login after boot up
-            Write-Host "$(Get-Date -Format G): $($VM.Name) does not have a DNS name yet. Waiting 30 seconds."
-            Start-Sleep -Seconds 30
-            $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+            while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
+                CheckTimeout -ErrorAction $ErrorActionPreference
+                # Give the machine time before attempting login after boot up
+                Write-Host "$(Get-Date -Format G): $($VM.Name) does not have a DNS name yet. Waiting 30 seconds."
+                Start-Sleep -Seconds 30
+                $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+            }
         }
     }
 
@@ -1086,7 +1105,7 @@ foreach ($Stage in $Stages) {
             RunspaceCreationActivity = "Creating Runspaces for stage $Stage, Group $ShutdownGroup"
             LMCreds                  = $LMCreds
             ADCreds                  = $ADCreds
-            WorkerScript             = $ShutdownWorker
+            WorkerScript             = $FirstRebootWorker
             Configuration            = $Configuration
             WorkerActivity           = "Collecting services and shutting down; Stage $Stage, Group $ShutdownGroup"
             WorkerStatus             = 'Shutting down.'
@@ -1096,6 +1115,60 @@ foreach ($Stage in $Stages) {
 
         Invoke-Parallelization @ShutdownParams
 
+        Write-Host "Finished Shutdown Group $ShutdownGroup."
+    }
+
+    # Write services data to CSV. If manual intervention is needed, user can access this file to check services.
+    if (Test-Path -Path $ScriptOutput -PathType leaf) { Clear-Content -Path $ScriptOutput }
+    $Configuration.Services | Export-Csv -Path $ScriptOutput -NoTypeInformation -Force
+    if (Test-Path -Path $UnvOutput -PathType leaf) { Clear-Content -Path $UnvOutput }
+    $Congifuration.Services | Where-Object { $_.ServiceName -match '^MEDITECH\sUNV\s.*' } | `
+            Export-Csv -Path $UnvOutput -NoTypeInformation -Force
+
+    Write-Host "$(Get-Date -Format G): Services list saved to $ScriptOutput"
+
+    $wshell = New-Object -ComObject Wscript.Shell
+    $ButtonClicked = $wshell.Popup('Do any servers require another patching reboot?', 0, 'Additional Patches', `
+            $Buttons.YesNo + $Icon.Question)
+
+    while ($ButtonClicked -eq $Selection.Yes) {
+        $VMsToReboot = Select-MultiOptionDialogBox -Title 'Select VMs to reboot' -Prompt 'Select VMs to reboot' `
+            -Values ($StageTable.Name) -Width 500 -Height 500
+        $RebootParams = @{
+            Servers                  = $VMsToReboot
+            RunspaceCreationActivity = "Creating Runspaces for stage $Stage"
+            LMCreds                  = $LMCreds
+            ADCreds                  = $ADCreds
+            WorkerScript             = $InterimWorker
+            Configuration            = $Configuration
+            WorkerActivity           = "Rebooting machines; Stage $Stage"
+            WorkerStatus             = 'Rebooting machines.'
+            VMCreds                  = $VMCreds
+        }
+
+        Invoke-Parallelization @RebootParams
+
+        $ButtonClicked = $wshell.Popup('Do any servers require another patching reboot?', 0, 'Additional Patches', `
+                $Buttons.YesNo + $Icon.Question)
+    }
+
+    $Configuration.InterimProcess = 'Shutdown'
+
+    # Perform final shutdown using InterimWorker in preparation of booting in correct order
+    $ShutdownParams = @{
+        Servers                  = $ShutdownServers
+        RunspaceCreationActivity = "Creating Runspaces for Stage $Stage"
+        LMCreds                  = $LMCreds
+        ADCreds                  = $ADCreds
+        WorkerScript             = $InterimWorker
+        Configuration            = $Configuration
+        WorkerActivity           = "Shutting down machines; Stage $Stage"
+        WorkerStatus             = 'Shutting down machines.'
+        VMCreds                  = $VMCreds
+    }
+    Invoke-Parallelization @ShutdownParams
+
+    <#
         Write-Progress -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
 
         $ShutdownList = ($Configuration.Shutdown.GetEnumerator() | Where-Object { $_.Value -eq 'True' }).key | `
@@ -1120,19 +1193,8 @@ foreach ($Stage in $Stages) {
             }
         }
 
-        Write-Host "Finished Shutdown Group $ShutdownGroup."
-
         Write-Progress -Activity 'Shutdown' -Completed
-    }
-
-    # Write services data to CSV. If manual intervention is needed, user can access this file to check services.
-    if (Test-Path -Path $ScriptOutput -PathType leaf) { Clear-Content -Path $ScriptOutput }
-    $Configuration.Services | Export-Csv -Path $ScriptOutput -NoTypeInformation -Force
-    if (Test-Path -Path $UnvOutput -PathType leaf) { Clear-Content -Path $UnvOutput }
-    $Congifuration.Services | Where-Object { $_.ServiceName -match '^MEDITECH\sUNV\s.*' } | `
-            Export-Csv -Path $UnvOutput -NoTypeInformation -Force
-
-    Write-Host "$(Get-Date -Format G): Services list saved to $ScriptOutput"
+    #>
 
     $StageTable = $StageTable | Sort-Object -Property BootGroup, Name -CaseSensitive
 
