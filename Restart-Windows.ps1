@@ -656,8 +656,6 @@ $FirstRebootWorker = {
             'Clear-RecycleBin -Confirm:$False')
         $prevProgressPreference = $global:ProgressPreference
 
-        $TimeoutCounter = [System.Diagnostics.Stopwatch]::StartNew()
-
         # Function to check if $TimeoutCounter has exceeded the timeout value
         function CheckTimeout {
             if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.Timeout) {
@@ -791,24 +789,40 @@ $FirstRebootWorker = {
                 }
                 $Configuration.Shutdown[$VM.Name] = $true
 
-                while ($VM.PowerState -ne 'PoweredOff' -or ([bool]$VM.Guest.HostName)) {
+                while ($VM.PowerState -ne 'PoweredOff') {
                     Start-Sleep -Seconds 30
                     $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
-                    $msg = ("$(Get-Date -Format G): Waiting for $($VM.Name) to shut down. Power state: " +
-                        "$($VM.PowerState). Hostname: $($VM.Guest.HostName). Boolean: $([bool]$VM.Guest.HostName)")
+                    $msg = "$(Get-Date -Format G): Waiting for $($VM.Name) to shut down."
+                    if ($VM.PowerState -ne 'PoweredOff') {
+                        $msg += " Power state: $($VM.PowerState). Power state must be PoweredOff."
+                    }
                     Write-Host $msg
                 }
+
+                # Wait an additional 30 seconds to ensure the VM is fully shut down
+                Start-Sleep -Seconds 30
+
+                $TimeoutCounter = [System.Diagnostics.Stopwatch]::StartNew()
 
                 $null = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
 
                 while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
                     CheckTimeout -ErrorAction $ErrorActionPreference
                     # Give the machine time before attempting login after boot up
-                    Write-Host "$(Get-Date -Format G): $($VM.Name) does not have a DNS name yet. Waiting 30 seconds."
                     Start-Sleep -Seconds 30
                     $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
-                    $msg = ("$(Get-Date -Format G): Starting $($VM.Name). Power state: $($VM.PowerState)." +
-                        " Hostname: $($VM.Guest.HostName). Boolean: $([bool]$VM.Guest.HostName)")
+                    $msg = "$(Get-Date -Format G): Starting $($VM.Name)."
+                    if ($VM.PowerState -ne 'PoweredOn') {
+                        $msg += " Power state: $($VM.PowerState). Power state must be PoweredOn."
+                    }
+                    if (![bool]$VM.Guest.HostName) {
+                        $msg += " Hostname: $($VM.Guest.HostName). Hostname must not be empty."
+                    }
+                    # If PowerState isn't on or hostname is null, add message telling user the script is waiting 30
+                    # seconds before checking again.
+                    if ($VM.PowerState -ne 'PoweredOn' -or ![bool]$VM.Guest.HostName) {
+                        $msg += ' Waiting 30 seconds before checking again.'
+                    }
                     Write-Host $msg
                 }
             }
@@ -932,11 +946,15 @@ $BootWorker = {
             while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
                 CheckTimeout -ErrorAction $ErrorActionPreference
                 # Give the machine time before attempting login after boot up
-                Write-Host "$(Get-Date -Format G): $($VM.Name) does not have a DNS name yet. Waiting 30 seconds."
                 Start-Sleep -Seconds 30
                 $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
-                $msg = ("$(Get-Date -Format G): Starting $($VM.Name). Power state: $($VM.PowerState)." +
-                    " Hostname: $($VM.Guest.HostName). Boolean: $([bool]$VM.Guest.HostName)")
+                $msg = "$(Get-Date -Format G): Starting $($VM.Name)."
+                if ($VM.PowerState -ne 'PoweredOn') {
+                    $msg += " Power state: $($VM.PowerState). Power state must be PoweredOn."
+                }
+                if (![bool]$VM.Guest.HostName) {
+                    $msg += " Hostname: $($VM.Guest.HostName). Hostname must not be empty."
+                }
                 Write-Host $msg
 
             }
@@ -1066,8 +1084,6 @@ $InterimWorker = {
 
         $prevProgressPreference = $global:ProgressPreference
 
-        $TimeoutCounter = [System.Diagnostics.Stopwatch]::StartNew()
-
         # Function to check if $TimeoutCounter has exceeded the timeout value
         function CheckTimeout {
             if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.Timeout) {
@@ -1097,26 +1113,40 @@ $InterimWorker = {
         while ($VM.PowerState -ne 'PoweredOff') {
             Start-Sleep -Seconds 30
             $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
-            $msg = ("$(Get-Date -Format G): Waiting for $($VM.Name) to shut down. Power state: $($VM.PowerState)." +
-                " Hostname: $($VM.Guest.HostName). Boolean: $([bool]$VM.Guest.HostName)")
+            $msg = "$(Get-Date -Format G): Waiting for $($VM.Name) to shut down."
+            if ($VM.PowerState -ne 'PoweredOff') {
+                $msg += " Power state: $($VM.PowerState). Power state must be PoweredOff."
+            }
             Write-Host $msg
-
         }
+
+        # Wait an additional 30 seconds to ensure the VM is fully shut down
+        Start-Sleep -Seconds 30
 
         if ($Configuration.InterimProcess -eq 'Reboot') {
             Write-Host "$(Get-Date -Format G): Rebooting $($VM.Name)."
+            $TimeoutCounter = [System.Diagnostics.Stopwatch]::StartNew()
+
             $null = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
 
             while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
                 CheckTimeout -ErrorAction $ErrorActionPreference
                 # Give the machine time before attempting login after boot up
-                Write-Host "$(Get-Date -Format G): $($VM.Name) does not have a DNS name yet. Waiting 30 seconds."
                 Start-Sleep -Seconds 30
                 $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
-                $msg = ("$(Get-Date -Format G): Rebooting $($VM.Name). Power state: $($VM.PowerState)." +
-                    " Hostname: $($VM.Guest.HostName). Boolean: $([bool]$VM.Guest.HostName)")
+                $msg = "$(Get-Date -Format G): Rebooting $($VM.Name)."
+                if ($VM.PowerState -ne 'PoweredOn') {
+                    $msg += " Power state: $($VM.PowerState). Power state must be PoweredOn."
+                }
+                if (![bool]$VM.Guest.HostName) {
+                    $msg += " Hostname: $($VM.Guest.HostName). Hostname must not be empty."
+                }
+                # If PowerState isn't on or hostname is null, add message telling user the script is waiting 30
+                # seconds before checking again.
+                if ($VM.PowerState -ne 'PoweredOn' -or ![bool]$VM.Guest.HostName) {
+                    $msg += ' Waiting 30 seconds before checking again.'
+                }
                 Write-Host $msg
-
             }
         }
     }
@@ -1222,6 +1252,13 @@ foreach ($Stage in $Stages) {
     while ($ButtonClicked -eq $Selection.Yes) {
         $VMsSelected = Select-MultiOptionDialogBox -Title 'Select VMs to reboot' -Prompt 'Select VMs to reboot' `
             -Values ($StageTable.Name) -Height 500
+
+        if ($null -eq $VMsSelected) {
+            $ButtonClicked = $wshell.Popup('Do any servers require another patching reboot?', 0, 'Additional Patches', `
+                    $Buttons.YesNo + $Icon.Question)
+            continue
+        }
+
         $VMsToReboot = $VMs | Where-Object { $_.Name -in $VMsSelected }
         $RebootParams = @{
             Servers                  = $VMsToReboot
