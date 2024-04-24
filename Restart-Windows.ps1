@@ -298,55 +298,6 @@ function Invoke-Parallelization {
                 continue
             }
 
-            # Boot VM if worker script is BootWorker
-            if ($WorkerScript -eq $BootWorker) {
-                try {
-                    $prevProgressPreference = $global:ProgressPreference
-                    $global:ProgressPreference = 'SilentlyContinue'
-                    Write-Host "$(Get-Date -Format G): Starting $($VM.Name)."
-                    $null = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
-                } catch {
-                    Write-Host "$(Get-Date -Format G): Unable to start $($VM.Name)." -BackgroundColor Red `
-                        -ForegroundColor Yellow
-                    $line = "Error in Line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line)"
-                    Write-Host "$(Get-Date -Format G): $($Error[0].Exception.GetType().FullName)."
-                    Write-Host "$(Get-Date -Format G): Error Message: $($_.Exception.Message)"
-                    Write-Host "$(Get-Date -Format G): $line"
-                } finally {
-                    $global:ProgressPreference = $prevProgressPreference
-                }
-            }
-
-            # if ($WorkerScript -ne $BootWorker -Or $Configuration.Shutdown[$VM.Name]) {
-            #     if ($WorkerScript -ne $BootWorker) {
-            #         <# $VM is the current item #>
-            #         if ($VM.Guest.HostName -notlike '*.*') {
-            #             $Creds = $LMCreds
-            #         } else {
-            #             $Creds = $ADCreds
-            #         }
-
-            #         if ($WorkerScript -eq $FirstRebootWorker) {
-            #             # Saving credentials to hashtable because HostName sometimes changes after shutdown.
-            #             $VMCreds[$VM.Name] = $Creds
-            #         }
-            #     } elseif ($Configuration.Shutdown[$VM.Name]) {
-            #         $Creds = $VMCreds[$VM.Name]
-
-            #         try {
-            #             $prevProgressPreference = $global:ProgressPreference
-            #             $global:ProgressPreference = 'SilentlyContinue'
-            #             Write-Host "$(Get-Date -Format G): Starting $($VM.Name)."
-            #             $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
-            #         } catch {
-            #             Write-Host "$(Get-Date -Format G): Unable to start $($VM.Name)." -BackgroundColor Red `
-            #                 -ForegroundColor Yellow
-            #             $Configuration.ScriptErrors += "$(Get-Date -Format G): WARNING: Unable to start $($VM.Name)."
-            #         } finally {
-            #             $global:ProgressPreference = $prevProgressPreference
-            #         }
-            #     }
-
             $PowerShell = [powershell]::Create()
             $PowerShell.RunspacePool = $RunspacePool
             $null = $PowerShell.AddScript($WorkerScript).AddArgument($VM).AddArgument($Creds).AddArgument($Configuration)
@@ -643,6 +594,9 @@ $FirstRebootWorker = {
     begin {
         $ErrorActionPreference = 'Stop'
         $Error.Clear()
+
+        $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+
         $SvcWhitelist = "'$($($Configuration.SvcWhitelist) -join "','")'"
 
         $ScriptText = ("try { Get-Service -Include $SvcWhitelist -ErrorAction Stop | Where-Object { " +
@@ -728,9 +682,10 @@ $FirstRebootWorker = {
                 if ($VM.ExtensionData.Guest.toolsRunningStatus -ne 'guestToolsNotRunning') {
                     Write-Host "$(Get-Date -Format G): Shutting down $($VM.Name)."
                     $null = Stop-VMGuest -VM $VM -Server $Configuration.VIServer -Confirm:$false
+                    $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
                 } else {
                     Write-Host "$(Get-Date -Format G): Stopping $($VM.Name)."
-                    $null = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
+                    $VM = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
                 }
                 $Configuration.Shutdown[$VM.Name] = $true
 
@@ -749,13 +704,15 @@ $FirstRebootWorker = {
 
                 $TimeoutCounter = [System.Diagnostics.Stopwatch]::StartNew()
 
-                $null = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+                $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
 
                 while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
-                    CheckTimeout -ErrorAction $ErrorActionPreference
-                    # Give the machine time before attempting login after boot up
-                    Start-Sleep -Seconds 30
-                    $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+                    try {
+                        CheckTimeout -ErrorAction $ErrorActionPreference
+                    } catch [System.TimeoutException] {
+                        Write-Host $_.Exception.Message -BackgroundColor Magenta -ForegroundColor Cyan
+                        break
+                    }
                     $msg = "$(Get-Date -Format G): Starting $($VM.Name)."
                     if ($VM.PowerState -ne 'PoweredOn') {
                         $msg += " Power state: $($VM.PowerState). Power state must be PoweredOn."
@@ -769,6 +726,8 @@ $FirstRebootWorker = {
                         $msg += ' Waiting 30 seconds before checking again.'
                     }
                     Write-Host $msg
+                    Start-Sleep -Seconds 30
+                    $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
                 }
             }
         } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
@@ -855,6 +814,8 @@ $BootWorker = {
     begin {
         $ErrorActionPreference = 'Stop'
         $Error.Clear()
+
+        $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
         # Run two Powershell commands with one Invoke-VMScript.
         # Get service status for all services in ServicesList and use while loop to wait until all services are
         # running.
@@ -887,12 +848,23 @@ $BootWorker = {
     process {
         try {
             $global:ProgressPreference = 'SilentlyContinue'
+            # Start VM if it is not already powered on. Log message if VM is already powered on.
+            if ($VM.PowerState -ne 'PoweredOn') {
+                Write-Host "$(Get-Date -Format G): Starting $($VM.Name)."
+                $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+            } else {
+                Write-Host "$(Get-Date -Format G): $($VM.Name) is already powered on."
+            }
+
             # Wait for VM power state ON and DNS Name assignment
             while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
-                CheckTimeout -ErrorAction $ErrorActionPreference
+                try {
+                    CheckTimeout -ErrorAction $ErrorActionPreference
+                } catch [System.TimeoutException] {
+                    Write-Host $_.Exception.Message -BackgroundColor Magenta -ForegroundColor Cyan
+                    break
+                }
                 # Give the machine time before attempting login after boot up
-                Start-Sleep -Seconds 30
-                $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
                 $msg = "$(Get-Date -Format G): Starting $($VM.Name)."
                 if ($VM.PowerState -ne 'PoweredOn') {
                     $msg += " Power state: $($VM.PowerState). Power state must be PoweredOn."
@@ -901,7 +873,8 @@ $BootWorker = {
                     $msg += " Hostname: $($VM.Guest.HostName). Hostname must not be empty."
                 }
                 Write-Host $msg
-
+                Start-Sleep -Seconds 30
+                $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
             }
 
             # Run script to check services.
@@ -919,7 +892,12 @@ $BootWorker = {
                 $ServicesCheck = Invoke-VMScript @InvokeVMScriptParams 3> $null
 
                 while ($ServicesCheck.ScriptOutput -like 'WARNING: Access denied*') {
-                    CheckTimeout -ErrorAction $ErrorActionPreference
+                    try {
+                        CheckTimeout -ErrorAction $ErrorActionPreference
+                    } catch [System.TimeoutException] {
+                        Write-Host $_.Exception.Message -BackgroundColor Magenta -ForegroundColor Cyan
+                        break
+                    }
                     Write-Host "$(Get-Date -Format G): $($VM.Name) failed login. Waiting 60s and trying again." `
                         -BackgroundColor Yellow -ForegroundColor DarkRed
                     Start-Sleep -Seconds 60
@@ -1027,6 +1005,8 @@ $InterimWorker = {
         $ErrorActionPreference = 'Stop'
         $Error.Clear()
 
+        $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+
         $prevProgressPreference = $global:ProgressPreference
         $TempPath = 'C:\Temp\'
         $VMToolsExecutable = Split-Path $Configuration.VMToolsExecutablePath -Leaf
@@ -1108,9 +1088,10 @@ $InterimWorker = {
             if ($VM.ExtensionData.Guest.toolsRunningStatus -ne 'guestToolsNotRunning') {
                 Write-Host "$(Get-Date -Format G): Shutting down $($VM.Name)."
                 $null = Stop-VMGuest -VM $VM -Server $Configuration.VIServer -Confirm:$false
+                $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
             } else {
                 Write-Host "$(Get-Date -Format G): Stopping $($VM.Name)."
-                $null = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
+                $VM = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
             }
 
             while ($VM.PowerState -ne 'PoweredOff') {
@@ -1130,13 +1111,16 @@ $InterimWorker = {
                 Write-Host "$(Get-Date -Format G): Rebooting $($VM.Name)."
                 $TimeoutCounter = [System.Diagnostics.Stopwatch]::StartNew()
 
-                $null = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
+                $VM = Start-VM -VM $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
 
                 while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
-                    CheckTimeout -ErrorAction $ErrorActionPreference
+                    try {
+                        CheckTimeout -ErrorAction $ErrorActionPreference
+                    } catch [System.TimeoutException] {
+                        Write-Host $_.Exception.Message -BackgroundColor Magenta -ForegroundColor Cyan
+                        break
+                    }
                     # Give the machine time before attempting login after boot up
-                    Start-Sleep -Seconds 30
-                    $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
                     $msg = "$(Get-Date -Format G): Rebooting $($VM.Name)."
                     if ($VM.PowerState -ne 'PoweredOn') {
                         $msg += " Power state: $($VM.PowerState). Power state must be PoweredOn."
@@ -1150,6 +1134,8 @@ $InterimWorker = {
                         $msg += ' Waiting 30 seconds before checking again.'
                     }
                     Write-Host $msg
+                    Start-Sleep -Seconds 30
+                    $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
                 }
             }
         } catch [VMware.VimAutomation.ViCore.Types.V1.ErrorHandling.InvalidGuestLogin] {
