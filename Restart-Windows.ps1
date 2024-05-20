@@ -318,11 +318,6 @@ function Invoke-Parallelization {
             Write-Progress @WriteProgressParams
 
             $VMindex++
-            # } else {
-            #     <# Action when all if and elseif conditions are false #>
-            #     Write-Host "$(Get-Date -Format G): Skipping $($VM.Name) because it failed during shutdown phase." `
-            #         -BackgroundColor DarkRed -ForegroundColor Yellow
-            # }
         }
 
         Write-Progress -Activity $RunspaceCreationActivity -Completed
@@ -342,11 +337,10 @@ function Invoke-Parallelization {
             }
             Write-Progress @WriteProgressParams
             if ($WorkerScript -eq $BootWorker) {
-                foreach ($j in $Jobs) {
-                    $currtime = Get-Date -Format mm:ss
-                    $currtime_lastfour = $currtime.Substring($currtime.length - 4, 4)
-                    if (($currtime_lastfour -eq '0:00' -Or
-                            $currtime_lastfour -eq '5:00') -And -Not $j.Runspace.IsCompleted) {
+                $currtime = Get-Date -Format mm:ss
+                $currtime_lastfour = $currtime.Substring($currtime.length - 4, 4)
+                if ($currtime_lastfour -eq '0:00' -Or $currtime_lastfour -eq '5:00') {
+                    foreach ($j in $Jobs | Where-Object { -Not $_.Runspace.IsCompleted }) {
                         $msg = "$(Get-Date -Format G): Waiting for services to start on $($j.Name). If five mins "
                         $msg += "have passed, obtain service list from $ScriptOutput and check the server manually."
                         Write-Host $msg
