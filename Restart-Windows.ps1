@@ -363,6 +363,20 @@ function Invoke-Parallelization {
 $null = Set-PowerCLIConfiguration -InvalidCertificateAction $Settings.InvalidCertAction -Scope Session `
     -Confirm:$false
 
+$Configuration.VMToolsDesiredVersion = Enter-StringDialogBox -Title 'VMware Tools' `
+    -Prompt 'What version of VMware Tools should be installed?' -Height 150 -Width 350
+
+if ($null -eq $Configuration.VMToolsDesiredVersion) {
+    $wshell = New-Object -ComObject Wscript.Shell
+    $msg = 'User canceled VMware Tools version selection. Exiting script.'
+    $null = $wshell.Popup($msg, 0, 'Exiting', $Buttons.OK + $Icon.Exclamation)
+    Exit 1223
+}
+
+# Prompt user for path to VMware Tools executable
+$Configuration.VMToolsExecutablePath = Get-FileName -initialDirectory $PSScriptRoot `
+    -title 'Select VMware Tools executable file' -filter 'Executable files (*.exe)|*.exe'
+
 # Connect to vCenter using logged on user credentials
 while ($null -eq $Configuration.VIServer) { $Configuration.VIServer = Connect-VIServer $Settings.vCenter }
 
@@ -378,13 +392,6 @@ try {
 
     Exit 1223
 }
-
-$Configuration.VMToolsDesiredVersion = Enter-StringDialogBox -Title 'VMware Tools' `
-    -Prompt 'What version of VMware Tools should be installed?' -Height 150
-
-# Prompt user for path to VMware Tools executable
-$Configuration.VMToolsExecutablePath = Get-FileName -initialDirectory $PSScriptRoot `
-    -title 'Select VMware Tools executable file' -filter 'Executable files (*.exe)|*.exe'
 
 # Prompt for Thycotic credentials
 $ThycoticCreds = $null
