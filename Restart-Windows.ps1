@@ -246,8 +246,10 @@ function Invoke-Parallelization {
     begin {
         $ServerCount = $Servers.Count
         if ($null -eq $ServerCount) { $ServerCount = 1 }
-        # Process no more than 25% of the list at once. (Minimum value = 20)
-        $MaxRunspaces = [Math]::Max([Math]::Ceiling($ServerCount / 4), 20)
+        # Set minimum runspaces to 20 or server count, whichever is lower.
+        $MinimumRunspaces = [Math]::Min($ServerCount, 20)
+        # Process no more than 25% of the list at once.
+        $MaxRunspaces = [Math]::Max([Math]::Ceiling($ServerCount / 4), $MinimumRunspaces)
 
         # Create runspace pool for parralelization
         $SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
