@@ -1246,6 +1246,7 @@ foreach ($Stage in $Stages) {
     if ($null -eq $StageCount) { $StageCount = 1 }
     $BootGroups = $StageTable.BootGroup | Sort-Object -Unique -CaseSensitive
     $ShutdownGroups = $StageTable.ShutdownGroup | Sort-Object -Unique -CaseSensitive
+    $StageServers = $VMs | Where-Object { $_.Name -in $StageTable.Name }
 
     $StageTable = $StageTable | Sort-Object -Property ShutdownGroup, Name -CaseSensitive
 
@@ -1319,7 +1320,7 @@ foreach ($Stage in $Stages) {
 
     # Perform final shutdown using InterimWorker in preparation of booting in correct order
     $ShutdownParams = @{
-        Servers                  = $ShutdownServers
+        Servers                  = $StageServers
         RunspaceCreationActivity = "Creating Runspaces for Stage $Stage"
         LMCreds                  = $LMCreds
         ADCreds                  = $ADCreds
@@ -1330,34 +1331,6 @@ foreach ($Stage in $Stages) {
         VMCreds                  = $VMCreds
     }
     Invoke-Parallelization @ShutdownParams
-
-    <#
-        Write-Progress -Activity 'Shutdown' -Status 'Waiting for shutdown.' -PercentComplete 0
-
-        $ShutdownList = ($Configuration.Shutdown.GetEnumerator() | Where-Object { $_.Value -eq 'True' }).key | `
-                Where-Object { $ShutdownServers.Name -eq $_ }
-        if ($ShutdownList) {
-            $AwaitingShutdown = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
-            $GroupCount = $AwaitingShutdown.Count
-
-            while ($AwaitingShutdown.PowerState -contains 'PoweredOn') {
-                $VMsShutdown = ($AwaitingShutdown.PowerState -eq 'PoweredOff').Count
-                $WriteProgressParams = @{
-                    Activity        = 'Shutdown'
-                    Status          = "Waiting for shutdown. $VMsShutdown/$GroupCount"
-                    PercentComplete = ($VMsShutdown / $GroupCount) * 100
-                }
-                Write-Progress @WriteProgressParams
-                $PoweredOnVMs = $AwaitingShutdown | Where-Object { $_.PowerState -eq 'PoweredOn' }
-                Write-Host "$(Get-Date -Format G): Waiting for the following machines to shut down: $PoweredOnVMs" `
-                    -BackgroundColor Yellow -ForegroundColor DarkRed
-                Start-Sleep -Milliseconds 1000
-                $AwaitingShutdown = Get-VM -Name $ShutdownList -Server $Configuration.VIServer
-            }
-        }
-
-        Write-Progress -Activity 'Shutdown' -Completed
-    #>
 
     $StageTable = $StageTable | Sort-Object -Property BootGroup, Name -CaseSensitive
 
