@@ -98,61 +98,6 @@ if ($Settings.TssFolder) {
 # Exit script if Customer field empty or if user selected no.
 if ($null -eq $ButtonClicked -or $ButtonClicked -eq $Selection.No) { Exit 1223 }
 
-# Prompt user for CSV with VMs, Process, BootGroup, and (optionally) ShutdownGroup
-$CSVFilename = Get-FileName -initialDirectory $PSScriptRoot -title 'Select CSV file with VM names and processing order' `
-    -filter 'Comma-delimited files (*.csv)|*.csv'
-
-$VMTable = Import-Csv -Path "$CSVFilename"
-
-# Exit script if required fields are not present
-if (![bool]($VMTable | Get-Member -Name Name) -or ![bool]($VMTable | Get-Member -Name Process) `
-        -or ![bool]($VMTable | Get-Member -Name BootGroup)) {
-    $wshell = New-Object -ComObject Wscript.Shell
-    $null = $wshell.Popup('CSV malformed, please review requirements and correct. Exiting script.', 0, 'Exiting', `
-            $Buttons.OK + $Icon.Exclamation)
-
-    Exit 11
-}
-
-# Check for ShutdownGroup column, if it doesn't exist shutdown order doesn't matter set all to 1
-if (![bool]($VMTable | Get-Member -Name ShutdownGroup)) {
-    $VMTable | Add-Member -MemberType NoteProperty -Name 'ShutdownGroup' -Value '1'
-}
-
-# Check for Stage column, if it doesn't exist only one stage exists
-if (![bool]($VMTable | Get-Member -Name Stage)) {
-    $VMTable | Add-Member -MemberType NoteProperty -Name 'Stage' -Value '1'
-}
-
-# Correct null values in groups by replacing with 1 or false
-foreach ($VM in $VMTable) {
-    $VM.Process = [System.Convert]::ToBoolean($VM.Process)
-    if ($null -eq $VM.Process) {
-        $VM.Process = $false
-    }
-
-    if ($null -eq $VM.BootGroup) {
-        $VM.BootGroup = 1
-    }
-
-    if ($null -eq $VM.ShutdownGroup) {
-        $VM.ShutdownGroup = 1
-    }
-
-    if ($null -eq $VM.Stage) {
-        $VM.Stage = 1
-    }
-}
-
-$VMTable | Add-Member -MemberType NoteProperty -Name 'Processed' -Value $false
-
-# Drop all rows that the script shouldn't process
-$VMTable = $VMTable | Where-Object { $_.Process -ceq $true }
-
-$Stages = $VMTable.Stage | Sort-Object -Unique -CaseSensitive
-$TotalStages = $Stages.Count
-if ($null -eq $TotalStages) { $TotalStages = 1 }
-
 # Prompt user for location of output files
 Add-Type -AssemblyName System.Windows.Forms
 $FolderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
@@ -381,6 +326,39 @@ $Configuration.VMToolsExecutablePath = Get-FileName -initialDirectory $PSScriptR
 
 # Connect to vCenter using logged on user credentials
 while ($null -eq $Configuration.VIServer) { $Configuration.VIServer = Connect-VIServer $Settings.vCenter }
+
+# Create VMTable using -Get-VM -Tag with category "Customer" and Name $Settings.Customer. Table will have VM Name,
+# "CC+ Process" category tag value, "CC+ Boot Group" category tag value, "CC+ Shutdown Group" category tag value,
+# and "CC+ Stage" category tag value. Sort by Stage, BootGroup, and Name.
+$VMTable = Get-VM -Tag $(Get-Tag -Name $Settings.Customer -Category 'Customer' -Server $Configuration.VIServer) |
+    Select-Object Name,
+    @{ Name = 'Process'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Process').Tag.Name } },
+    @{ Name = 'BootGroup'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Boot Group').Tag.Name } },
+    @{ Name = 'ShutdownGroup'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Shutdown Group').Tag.Name } },
+    @{ Name = 'Stage'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Stage').Tag.Name } } |
+    Sort-Object Stage, BootGroup, ShutdownGroup, Name
+
+# Output table to screen for user to verify.
+$VMTable | Format-Table -AutoSize
+
+# Prompt user to confirm processing of VMs. If user selects no, exit script.
+$ButtonClicked = $null
+$ButtonClicked = $wshell.Popup('Do you want to process the VMs as listed?', 0, 'Confirm VMs', `
+        $Buttons.YesNo + $Icon.Question)
+
+if ($ButtonClicked -eq $Selection.No) {
+    # Disconnect from vCenter
+    Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
+    # Exit script with no error
+    Exit 0
+}
+
+# Drop all rows that the script shouldn't process
+$VMTable = $VMTable | Where-Object { $_.Process -ceq 'TRUE' }
+
+$Stages = $VMTable.Stage | Sort-Object -Unique -CaseSensitive
+$TotalStages = $Stages.Count
+if ($null -eq $TotalStages) { $TotalStages = 1 }
 
 try {
     $VMs = Get-VM -Name $VMTable.Name -Server $Configuration.VIServer
