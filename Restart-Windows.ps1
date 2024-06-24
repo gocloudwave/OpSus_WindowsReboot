@@ -336,7 +336,7 @@ $VMTable = Get-VM -Tag $(Get-Tag -Name $Settings.Customer -Category 'Customer' -
     @{ Name = 'BootGroup'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Boot Group').Tag.Name } },
     @{ Name = 'ShutdownGroup'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Shutdown Group').Tag.Name } },
     @{ Name = 'Stage'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Stage').Tag.Name } } |
-    Sort-Object Stage, BootGroup, ShutdownGroup, Name
+    Sort-Object Process, Stage, BootGroup, ShutdownGroup, Name
 
 # Output table to screen for user to verify.
 $VMTable | Format-Table -AutoSize
