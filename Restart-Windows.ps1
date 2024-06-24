@@ -353,6 +353,8 @@ if ($ButtonClicked -eq $Selection.No) {
     Exit 0
 }
 
+$VMTable | Add-Member -MemberType NoteProperty -Name 'Processed' -Value $false
+
 # Drop all rows that the script shouldn't process
 $VMTable = $VMTable | Where-Object { $_.Process -ceq 'TRUE' }
 
