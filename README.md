@@ -1,8 +1,8 @@
 # Reboot Windows VMs with specified order
 
-Takes a CSV file as input. Use a hypervisor to connect to Windows machines.
+Use a hypervisor to connect to Windows machines.
 Store Windows services details, issue power-off command, wait until all systems
-are powered off, start systems based on priority from CSV, and ensure services
+are powered off, start systems based on priority from VMware tagging, and ensure services
 are back to their original state before moving to the next system. The script
 will shutdown all servers within a stage before booting the servers up again.
 _NOTE: Current script only supports VMware._
@@ -14,6 +14,7 @@ _NOTE: Current script only supports VMware._
   - [Files](#files)
   - [Requirements](#requirements)
   - [Definitions](#definitions)
+    - [Customer](#customer)
     - [DNSDomain](#dnsdomain)
     - [InvalidCertAction](#invalidcertaction)
     - [MinsBtwStages](#minsbtwstages)
@@ -75,6 +76,7 @@ _NOTE: Current script only supports VMware._
 
    ```json
    {
+     "Customer": "MMM",
      "InvalidCertAction": "Ignore",
      "DNSDomain": "fabrikam.LOCAL",
      "MinsBtwStages": 15,
@@ -92,56 +94,14 @@ _NOTE: Current script only supports VMware._
    }
    ```
 
-7. Create a CSV file listing the VM Names, whether or not to process each, and
-   the order for processing. The file must have at least three columns (Name,
-   Process, and BootGroup) with a header row. The file may contain up to two
-   additional columns (ShutdownGroup and Stage). The stage column allows a user
-   to complete a full reboot cycle between stages. The shutdown column allows the
-   user to specify a shutdown order within a stage. _NOTE: Default value for
-   BootGroup, ShutdownGroup, and Stage is 1 if NULL; default value for Process
-   is FALSE if NULL._
-
-   **Example 1**
-
-   ```csv
-   Name,Process,BootGroup
-   ServerA,TRUE,1
-   ServerB,FALSE,1
-   ServerC,TRUE,2
-   ServerD,TRUE,3
-   ```
-
-   **Example 2**
-
-   ```csv
-   Name,Process,BootGroup,Stage
-   ServerA,TRUE,1,1
-   ServerB,FALSE,1,2
-   ServerC,TRUE,2,1
-   ServerD,TRUE,3,1
-   ```
-
-   **Example 3**
-
-   ```csv
-   Name,Process,BootGroup,ShutdownGroup
-   ServerA,FALSE,1,3
-   ServerB,TRUE,1,3
-   ServerC,FALSE,2,2
-   ServerD,TRUE,3,1
-   ```
-
-   **Example 4**
-
-   ```csv
-   Name,Process,BootGroup,ShutdownGroup,Stage
-   ServerA,FALSE,1,3,1
-   ServerB,TRUE,1,3,2
-   ServerC,FALSE,2,2,1
-   ServerD,TRUE,3,1,1
-   ```
+7. Tag all VMs using categories Customer, CC+ Process, CC+ Stage, CC+ Boot
+   Group, CC+ Shutdown Group
 
 ## Definitions
+
+### Customer
+
+Customer name as tagged using Customer category in VMware.
 
 ### DNSDomain
 
@@ -207,22 +167,20 @@ script will ensure the same state upon boot. Wildcards are permitted.
 2. Run `Restart-Windows.ps1`.
 3. The script will prompt the user for the settings.json file location.
    - This is useful if you want to have a settings file for each customer.
-4. The script will prompt the user for a CSV file listing VM Names, Process,
-   BootGroup, and (optionally) ShutdownGroup and Stage.
-5. Enter credentials needed to connect to Thycotic.
+4. Enter credentials needed to connect to Thycotic.
    - If the user enters incorrect credentials twice, the script will skip
      connecting to Thycotic.
    - If Thycotic is down, the script will prompt the user to enter AD and Local
      Machine Administrator credentials manually.
-6. Select the secret name for the AD user.
+5. Select the secret name for the AD user.
    - Cancel later prompts the user to manually enter the credentials.
-7. Select the secret name for the Local Machine Administrator user.
+6. Select the secret name for the Local Machine Administrator user.
    - Cancel later prompts the user to manually enter the credentials.
-8. If no secrets exist with the Active Directory or Local Windows templates, the
+7. If no secrets exist with the Active Directory or Local Windows templates, the
    script will prompt the user to enter the credentials manually.
-9. The script will output its actions to the screen while it runs.
+8. The script will output its actions to the screen while it runs.
    - The script will appear frozen if the required services on a server do not
      start. If this happens, the end user must take action to start the services
      manually and the script will continue as planned.
-10. The script will display a `Done` dialog box when it completes that states
-    how long the script took to run.
+9. The script will display a `Done` dialog box when it completes that states
+   how long the script took to run.
