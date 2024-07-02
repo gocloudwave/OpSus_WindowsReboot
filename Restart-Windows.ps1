@@ -310,19 +310,32 @@ function Invoke-Parallelization {
 $null = Set-PowerCLIConfiguration -InvalidCertificateAction $Settings.InvalidCertAction -Scope Session `
     -Confirm:$false
 
-$Configuration.VMToolsDesiredVersion = Enter-StringDialogBox -Title 'VMware Tools' `
-    -Prompt 'What version of VMware Tools should be installed?' -Height 150 -Width 350
+# Prompt user if they want to update VMware Tools
+$Configuration.UpdateVMTools = $false
+$ButtonClicked = $null
+$ButtonClicked = $wshell.Popup('Do you want to update VMware Tools?', 0, 'Update VMware Tools', `
+        $Buttons.YesNo + $Icon.Question)
 
-if ($null -eq $Configuration.VMToolsDesiredVersion) {
-    $wshell = New-Object -ComObject Wscript.Shell
-    $msg = 'User canceled VMware Tools version selection. Exiting script.'
-    $null = $wshell.Popup($msg, 0, 'Exiting', $Buttons.OK + $Icon.Exclamation)
-    Exit 1223
+if ($ButtonClicked -eq $Selection.Yes) {
+    $Configuration.UpdateVMTools = $true
 }
 
-# Prompt user for path to VMware Tools executable
-$Configuration.VMToolsExecutablePath = Get-FileName -initialDirectory $PSScriptRoot `
-    -title 'Select VMware Tools executable file' -filter 'Executable files (*.exe)|*.exe'
+if ($Configuration.UpdateVMTools) {
+    # Prompt user for desired version of VMware Tools
+    $Configuration.VMToolsDesiredVersion = Enter-StringDialogBox -Title 'VMware Tools' `
+        -Prompt 'What version of VMware Tools should be installed?' -Height 150 -Width 350
+
+    if ($null -eq $Configuration.VMToolsDesiredVersion) {
+        $wshell = New-Object -ComObject Wscript.Shell
+        $msg = 'User canceled VMware Tools version selection. Exiting script.'
+        $null = $wshell.Popup($msg, 0, 'Exiting', $Buttons.OK + $Icon.Exclamation)
+        Exit 1223
+    }
+
+    # Prompt user for path to VMware Tools executable
+    $Configuration.VMToolsExecutablePath = Get-FileName -initialDirectory $PSScriptRoot `
+        -title 'Select VMware Tools executable file' -filter 'Executable files (*.exe)|*.exe'
+}
 
 # Connect to vCenter using logged on user credentials
 while ($null -eq $Configuration.VIServer) { $Configuration.VIServer = Connect-VIServer $Settings.vCenter }
@@ -991,12 +1004,6 @@ $InterimWorker = {
         $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
 
         $prevProgressPreference = $global:ProgressPreference
-        $TempPath = 'C:\Temp\'
-        $VMToolsExecutable = Split-Path $Configuration.VMToolsExecutablePath -Leaf
-        $VMToolsInstallationScript = ("$TempPath\$VMToolsExecutable /S /v " + '"/qn REBOOT=R ADDLOCAL=ALL ' +
-            'REMOVE=Hgfs"')
-        $PostVMToolsInstallationScript = ("Remove-Item -Path '$TempPath\$VMToolsExecutable' -Force; " +
-            'Clear-RecycleBin -Confirm:$False')
 
         # Function to check if $TimeoutCounter has exceeded the timeout value
         function CheckTimeout {
@@ -1018,54 +1025,63 @@ $InterimWorker = {
 
         # Try/Catch block to handle errors during VMtools installation
         try {
-            # Check if VMware Tools is installed and at the desired version
-            if ($VM.ExtensionData.Guest.toolsVersion -ne $Configuration.VMToolsDesiredVersion) {
-                Write-Host "$(Get-Date -Format G): Upgrading VMware Tools on $($VM.Name)."
-                # Copy VMtools executable to VM
-                $CopyVMGuestFileParams = @{
-                    Server          = $Configuration.VIServer
-                    Source          = $Configuration.VMToolsExecutablePath
-                    Destination     = 'C:\Temp\'
-                    VM              = $VM
-                    GuestCredential = $VMcreds
-                    LocalToGuest    = $true
-                    Force           = $true
-                    ErrorAction     = $ErrorActionPreference
-                }
-                Copy-VMGuestFile @CopyVMGuestFileParams 3> $null
-
-                # Install VMtools; Run Asynchronously because the script will 'fail' during installation
-                $InvokeVMScriptParams = @{
-                    Server          = $Configuration.VIServer
-                    VM              = $VM
-                    ScriptText      = $VMToolsInstallationScript
-                    GuestCredential = $VMcreds
-                    RunAsync        = $true
-                    # ErrorAction     = 'SilentlyContinue' # Connectivity to guest VM drops when upgrading tools
-                }
-                $null = Invoke-VMScript @InvokeVMScriptParams 3> $null
-
-                $SleepSeconds = 5
-                $Timeout = 300
-                $ElapsedTime = 0
-                while ($ElapsedTime -lt $Timeout) {
-                    $VM = Get-VM -Name $VM.Name -Server $Configuration.VIServer
-                    if ($VM.ExtensionData.Guest.toolsVersion -eq $Configuration.VMToolsDesiredVersion) {
-                        break
+            # Update VMTools if necessary
+            if ($Configuration.UpdateVMTools) {
+                $TempPath = 'C:\Temp\'
+                $VMToolsExecutable = Split-Path $Configuration.VMToolsExecutablePath -Leaf
+                $VMToolsInstallationScript = ("$TempPath\$VMToolsExecutable /S /v " + '"/qn REBOOT=R ' +
+                    'ADDLOCAL=ALL REMOVE=Hgfs"')
+                $PostVMToolsInstallationScript = ("Remove-Item -Path '$TempPath\$VMToolsExecutable' -Force; " +
+                    'Clear-RecycleBin -Confirm:$False')
+                # Check if VMware Tools is installed and at the desired version
+                if ($VM.ExtensionData.Guest.toolsVersion -ne $Configuration.VMToolsDesiredVersion) {
+                    Write-Host "$(Get-Date -Format G): Upgrading VMware Tools on $($VM.Name)."
+                    # Copy VMtools executable to VM
+                    $CopyVMGuestFileParams = @{
+                        Server          = $Configuration.VIServer
+                        Source          = $Configuration.VMToolsExecutablePath
+                        Destination     = 'C:\Temp\'
+                        VM              = $VM
+                        GuestCredential = $VMcreds
+                        LocalToGuest    = $true
+                        Force           = $true
+                        ErrorAction     = $ErrorActionPreference
                     }
-                    $ElapsedTime += $SleepSeconds
-                    Start-Sleep -Seconds $SleepSeconds
-                }
+                    Copy-VMGuestFile @CopyVMGuestFileParams 3> $null
 
-                # Post VMtools installation cleanup
-                $InvokeVMScriptParams = @{
-                    Server          = $Configuration.VIServer
-                    VM              = $VM
-                    ScriptText      = $PostVMToolsInstallationScript
-                    GuestCredential = $VMcreds
-                    ErrorAction     = $ErrorActionPreference
+                    # Install VMtools; Run Asynchronously because the script will 'fail' during installation
+                    $InvokeVMScriptParams = @{
+                        Server          = $Configuration.VIServer
+                        VM              = $VM
+                        ScriptText      = $VMToolsInstallationScript
+                        GuestCredential = $VMcreds
+                        RunAsync        = $true
+                        # ErrorAction     = 'SilentlyContinue' # Connectivity to guest VM drops when upgrading tools
+                    }
+                    $null = Invoke-VMScript @InvokeVMScriptParams 3> $null
+
+                    $SleepSeconds = 5
+                    $Timeout = 300
+                    $ElapsedTime = 0
+                    while ($ElapsedTime -lt $Timeout) {
+                        $VM = Get-VM -Name $VM.Name -Server $Configuration.VIServer
+                        if ($VM.ExtensionData.Guest.toolsVersion -eq $Configuration.VMToolsDesiredVersion) {
+                            break
+                        }
+                        $ElapsedTime += $SleepSeconds
+                        Start-Sleep -Seconds $SleepSeconds
+                    }
+
+                    # Post VMtools installation cleanup
+                    $InvokeVMScriptParams = @{
+                        Server          = $Configuration.VIServer
+                        VM              = $VM
+                        ScriptText      = $PostVMToolsInstallationScript
+                        GuestCredential = $VMcreds
+                        ErrorAction     = $ErrorActionPreference
+                    }
+                    $null = Invoke-VMScript @InvokeVMScriptParams 3> $null
                 }
-                $null = Invoke-VMScript @InvokeVMScriptParams 3> $null
             }
 
             if ($VM.ExtensionData.Guest.toolsRunningStatus -ne 'guestToolsNotRunning') {
