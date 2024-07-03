@@ -98,19 +98,6 @@ if ($Settings.TssFolder) {
 # Exit script if Customer field empty or if user selected no.
 if ($null -eq $ButtonClicked -or $ButtonClicked -eq $Selection.No) { Exit 1223 }
 
-# Prompt user for location of output files
-Add-Type -AssemblyName System.Windows.Forms
-$FolderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
-$FolderBrowser.Description = 'Select a folder in which to store logs and temporary files.'
-[void]$FolderBrowser.ShowDialog()
-
-$ScriptOutput = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUniversal)-Services.csv"
-$UnvOutput = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUniversal)-UNV-Services.csv"
-$ScriptErrors = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUniversal)-ScriptErrors.log"
-$ADTssTemplateId = $Settings.SecretTemplateLookup.ActiveDirectoryAccount
-$LMTssTemplateId = $Settings.SecretTemplateLookup.LocalUserWindowsAccount
-$TssUsername = "$($Settings.TssDomain)\$($Settings.TssUser)"
-
 # Base path to Secret Server
 $ssUri = $Settings.ssUri
 
@@ -126,7 +113,6 @@ if ($Env:USERDNSDOMAIN -ne $Settings.DNSDomain) {
 
 . "$PSScriptRoot\Search-TssFolders.ps1"
 . "$PSScriptRoot\Get-UserCredentials.ps1"
-. "$PSScriptRoot\Get-VMToolsStatus.ps1"
 
 # Function to wait between stages
 function Wait-Stage {
@@ -310,6 +296,49 @@ function Invoke-Parallelization {
 $null = Set-PowerCLIConfiguration -InvalidCertificateAction $Settings.InvalidCertAction -Scope Session `
     -Confirm:$false
 
+# Connect to vCenter using logged on user credentials
+while ($null -eq $Configuration.VIServer) { $Configuration.VIServer = Connect-VIServer $Settings.vCenter }
+
+# Create VMTable using -Get-VM -Tag with category "Customer" and Name $Settings.Customer. Table will have VM Name,
+# "CC+ Process" category tag value, "CC+ Boot Group" category tag value, "CC+ Shutdown Group" category tag value,
+# and "CC+ Stage" category tag value. Sort by Stage, BootGroup, and Name.
+$VMTable = Get-VM -Tag $(Get-Tag -Name $Settings.Customer -Category 'Customer' -Server $Configuration.VIServer) |
+    Select-Object Name,
+    @{ Name = 'Process'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Process').Tag.Name } },
+    @{ Name = 'BootGroup'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Boot Group').Tag.Name } },
+    @{ Name = 'ShutdownGroup'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Shutdown Group').Tag.Name } },
+    @{ Name = 'Stage'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Stage').Tag.Name } },
+    @{ Name = 'VM Tools Version'; Expression = { $_.ExtensionData.Guest.toolsVersion } } |
+    Sort-Object Process, Stage, BootGroup, ShutdownGroup, Name
+
+# Output table to screen for user to verify.
+$VMTable | Format-Table -AutoSize
+
+# Prompt user to confirm processing of VMs. If user selects no, exit script.
+$ButtonClicked = $null
+$ButtonClicked = $wshell.Popup('Do you want to process the VMs as listed?', 0, 'Confirm VMs', `
+        $Buttons.YesNo + $Icon.Question)
+
+if ($ButtonClicked -eq $Selection.No) {
+    # Disconnect from vCenter
+    Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
+    # Exit script with no error
+    Exit 0
+}
+
+# Prompt user for location of output files
+Add-Type -AssemblyName System.Windows.Forms
+$FolderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
+$FolderBrowser.Description = 'Select a folder in which to store logs and temporary files.'
+[void]$FolderBrowser.ShowDialog()
+
+$ScriptOutput = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUniversal)-Services.csv"
+$UnvOutput = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUniversal)-UNV-Services.csv"
+$ScriptErrors = "$($FolderBrowser.SelectedPath)\$(Get-Date -Format FileDateUniversal)-ScriptErrors.log"
+$ADTssTemplateId = $Settings.SecretTemplateLookup.ActiveDirectoryAccount
+$LMTssTemplateId = $Settings.SecretTemplateLookup.LocalUserWindowsAccount
+$TssUsername = "$($Settings.TssDomain)\$($Settings.TssUser)"
+
 # Prompt user if they want to update VMware Tools
 $Configuration.UpdateVMTools = $false
 $ButtonClicked = $null
@@ -335,35 +364,6 @@ if ($Configuration.UpdateVMTools) {
     # Prompt user for path to VMware Tools executable
     $Configuration.VMToolsExecutablePath = Get-FileName -initialDirectory $PSScriptRoot `
         -title 'Select VMware Tools executable file' -filter 'Executable files (*.exe)|*.exe'
-}
-
-# Connect to vCenter using logged on user credentials
-while ($null -eq $Configuration.VIServer) { $Configuration.VIServer = Connect-VIServer $Settings.vCenter }
-
-# Create VMTable using -Get-VM -Tag with category "Customer" and Name $Settings.Customer. Table will have VM Name,
-# "CC+ Process" category tag value, "CC+ Boot Group" category tag value, "CC+ Shutdown Group" category tag value,
-# and "CC+ Stage" category tag value. Sort by Stage, BootGroup, and Name.
-$VMTable = Get-VM -Tag $(Get-Tag -Name $Settings.Customer -Category 'Customer' -Server $Configuration.VIServer) |
-    Select-Object Name,
-    @{ Name = 'Process'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Process').Tag.Name } },
-    @{ Name = 'BootGroup'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Boot Group').Tag.Name } },
-    @{ Name = 'ShutdownGroup'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Shutdown Group').Tag.Name } },
-    @{ Name = 'Stage'; Expression = { (Get-TagAssignment -Entity $_ -Category 'CC+ Stage').Tag.Name } } |
-    Sort-Object Process, Stage, BootGroup, ShutdownGroup, Name
-
-# Output table to screen for user to verify.
-$VMTable | Format-Table -AutoSize
-
-# Prompt user to confirm processing of VMs. If user selects no, exit script.
-$ButtonClicked = $null
-$ButtonClicked = $wshell.Popup('Do you want to process the VMs as listed?', 0, 'Confirm VMs', `
-        $Buttons.YesNo + $Icon.Question)
-
-if ($ButtonClicked -eq $Selection.No) {
-    # Disconnect from vCenter
-    Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
-    # Exit script with no error
-    Exit 0
 }
 
 $VMTable | Add-Member -MemberType NoteProperty -Name 'Processed' -Value $false
