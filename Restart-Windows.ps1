@@ -354,7 +354,8 @@ if ($Configuration.UpdateVMTools) {
     $Configuration.VMToolsDesiredVersion = Enter-StringDialogBox -Title 'VMware Tools' `
         -Prompt 'What version of VMware Tools should be installed?' -Height 150 -Width 350
 
-    if ($null -eq $Configuration.VMToolsDesiredVersion) {
+    # Ensure user didn't cancel the dialog box or click OK without entering text
+    if ($null -eq $Configuration.VMToolsDesiredVersion -or $Configuration.VMToolsDesiredVersion -eq '') {
         $wshell = New-Object -ComObject Wscript.Shell
         $msg = 'User canceled VMware Tools version selection. Exiting script.'
         $null = $wshell.Popup($msg, 0, 'Exiting', $Buttons.OK + $Icon.Exclamation)
