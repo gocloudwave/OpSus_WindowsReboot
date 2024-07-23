@@ -359,6 +359,7 @@ if ($Configuration.UpdateVMTools) {
         $wshell = New-Object -ComObject Wscript.Shell
         $msg = 'User canceled VMware Tools version selection. Exiting script.'
         $null = $wshell.Popup($msg, 0, 'Exiting', $Buttons.OK + $Icon.Exclamation)
+        Disconnect-VIServer -Server $Configuration.VIServer -Force -Confirm:$false
         Exit 1223
     }
 
