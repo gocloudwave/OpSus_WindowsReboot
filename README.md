@@ -18,7 +18,8 @@ _NOTE: Current script only supports VMware._
     - [DNSDomain](#dnsdomain)
     - [InvalidCertAction](#invalidcertaction)
     - [MinsBtwStages](#minsbtwstages)
-    - [Timeout](#timeout)
+    - [BootTimeout](#boottimeout)
+    - [ShutdownTimeout](#shutdowntimeout)
     - [vCenter](#vcenter)
     - [TssFolder](#tssfolder)
     - [TssDomain](#tssdomain)
@@ -32,8 +33,6 @@ _NOTE: Current script only supports VMware._
 
 - Get-UserCredentials.ps1
   - Contains a function to create a PS Credential from Thycotic or user prompts.
-- Get-VMToolsStatus.ps1
-  - Contains a function to check the VMware tools status.
 - Restart-Windows.ps1
   - Run this script to restart VMs.
 - Search-TssFolders.ps1
@@ -77,14 +76,15 @@ _NOTE: Current script only supports VMware._
    ```json
    {
      "Customer": "MMM",
-     "InvalidCertAction": "Ignore",
-     "DNSDomain": "fabrikam.LOCAL",
-     "MinsBtwStages": 15,
-     "Timeout": 5,
      "vCenter": "vcenter.fabrikam.local",
      "TssFolder": "ThycoticFolder",
      "TssDomain": "ThycoticDomain",
      "TssUser": "ThycoticUser",
+     "DNSDomain": "fabrikam.LOCAL",
+     "MinsBtwStages": 15,
+     "BootTimeout": 5,
+     "ShutdownTimeout": 30,
+     "InvalidCertAction": "Ignore",
      "SecretTemplateLookup": {
        "ActiveDirectoryAccount": 6001,
        "LocalUserWindowsAccount": 6003
@@ -119,10 +119,15 @@ a certificate error. For more information about invalid certificates, run
 How many minutes should the script wait after completing one stage before
 beginning the next stage.
 
-### Timeout
+### BootTimeout
 
 How many minutes should the script wait before considering a server boot as
 failed. The user will see a prompt to indicate the failed servers.
+
+### ShutdownTimeout
+
+How many minutes should the script wait before considering a server shutdown as
+failed. The script will remove that server from furhter processing until the final reboot.
 
 ### vCenter
 
@@ -134,11 +139,11 @@ The name of the folder within Thycotic that contains the credentials needed.
 
 ### TssDomain
 
-The domain needed for authentication to Thycotic.
+The domain needed for authentication to Thycotic. **Changeable when entering credentials**
 
 ### TssUser
 
-The user authenticating to Thycotic.
+The user authenticating to Thycotic. **Changeable when entering credentials**
 
 ### SecretTemplateLookup
 
@@ -157,8 +162,7 @@ script will ensure the same state upon boot. Wildcards are permitted.
 
 ## Restart Windows VMs
 
-1. Place `Get-UserCredentials.ps1`, `Get-VMToolsStatus.ps1`,
-   `Restart-Windows.ps1`, `Search-TssFolders.ps1`,
+1. Place `Get-UserCredentials.ps1`, `Restart-Windows.ps1`, `Search-TssFolders.ps1`,
    `settings.json`, and `User-Prompts.ps1` in a single folder on a machine that
    can connect to the vCenter server.
    - If you downloaded the scripts from the Internet, you need to ensure that
@@ -179,8 +183,9 @@ script will ensure the same state upon boot. Wildcards are permitted.
 7. If no secrets exist with the Active Directory or Local Windows templates, the
    script will prompt the user to enter the credentials manually.
 8. The script will output its actions to the screen while it runs.
-   - The script will appear frozen if the required services on a server do not
-     start. If this happens, the end user must take action to start the services
-     manually and the script will continue as planned.
+   - The script will list servers and services waiting to start at every five
+     minute mark. The end user must take action to start the services manually
+     if the user feels too much time has passed, then the script will continue
+     as planned.
 9. The script will display a `Done` dialog box when it completes that states
    how long the script took to run.

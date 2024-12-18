@@ -86,7 +86,8 @@ $SettingsFile = Get-FileName -initialDirectory $PSScriptRoot -title 'Select JSON
 
 $Settings = Get-Content $SettingsFile -Raw | ConvertFrom-Json
 $Configuration.SvcWhitelist = $Settings.SvcWhitelist
-$Configuration.Timeout = $Settings.Timeout
+$Configuration.BootTimeout = $Settings.BootTimeout
+$Configuration.ShutdownTimeout = $Settings.ShutdownTimeout
 
 # Display settings details and ask user to confirm continuation of script
 if ($Settings.TssFolder) {
@@ -604,8 +605,8 @@ $FirstRebootWorker = {
 
         # Function to check if $TimeoutCounter has exceeded the timeout value
         function CheckTimeout {
-            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.Timeout) {
-                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.Timeout) " +
+            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.BootTimeout) {
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.BootTimeout) " +
                 'minutes. Logging.'
                 throw [System.TimeoutException] $msg
             }
@@ -835,8 +836,8 @@ $BootWorker = {
 
         # Function to check if $TimeoutCounter has exceeded the timeout value
         function CheckTimeout {
-            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.Timeout) {
-                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.Timeout) " +
+            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.BootTimeout) {
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.BootTimeout) " +
                 'minutes. Logging.'
                 throw [System.TimeoutException] $msg
             }
@@ -1009,8 +1010,8 @@ $InterimWorker = {
 
         # Function to check if $TimeoutCounter has exceeded the timeout value
         function CheckTimeout {
-            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.Timeout) {
-                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.Timeout) " +
+            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.BootTimeout) {
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.BootTimeout) " +
                 'minutes. Logging.'
                 throw [System.TimeoutException] $msg
             }
