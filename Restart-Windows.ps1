@@ -63,6 +63,7 @@ $Configuration.Services = @()
 $Configuration.ScriptErrors = @()
 $Configuration.Shutdown = @{}
 $Configuration.BootFailure = @()
+$Configuration.ShutdownFailure = @()
 $Configuration.VIServer = $null
 $Configuration.CredsTest = @{}
 $Configuration.InterimProcess = 'Reboot'
@@ -605,8 +606,12 @@ $FirstRebootWorker = {
 
         # Function to check if $TimeoutCounter has exceeded the timeout value
         function CheckTimeout {
-            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.BootTimeout) {
-                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.BootTimeout) " +
+            param (
+                [int]$Timeout,
+                [string]$Action
+            )
+            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Timeout) {
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Timeout) " +
                 'minutes. Logging.'
                 throw [System.TimeoutException] $msg
             }
@@ -707,7 +712,12 @@ $FirstRebootWorker = {
 
                 while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
                     try {
-                        CheckTimeout -ErrorAction $ErrorActionPreference
+                        $TimeoutParams = @{
+                            Timeout     = $Configuration.BootTimeout
+                            Action      = 'boot'
+                            ErrorAction = $ErrorActionPreference
+                        }
+                        CheckTimeout @TimeoutParams
                     } catch [System.TimeoutException] {
                         Write-Host $_.Exception.Message -BackgroundColor Magenta -ForegroundColor Cyan
                         break
@@ -836,8 +846,12 @@ $BootWorker = {
 
         # Function to check if $TimeoutCounter has exceeded the timeout value
         function CheckTimeout {
-            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.BootTimeout) {
-                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.BootTimeout) " +
+            param (
+                [int]$Timeout,
+                [string]$Action
+            )
+            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Timeout) {
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Timeout) " +
                 'minutes. Logging.'
                 throw [System.TimeoutException] $msg
             }
@@ -858,7 +872,12 @@ $BootWorker = {
             # Wait for VM power state ON and DNS Name assignment
             while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
                 try {
-                    CheckTimeout -ErrorAction $ErrorActionPreference
+                    $TimeoutParams = @{
+                        Timeout     = $Configuration.BootTimeout
+                        Action      = 'boot'
+                        ErrorAction = $ErrorActionPreference
+                    }
+                    CheckTimeout @TimeoutParams
                 } catch [System.TimeoutException] {
                     Write-Host $_.Exception.Message -BackgroundColor Magenta -ForegroundColor Cyan
                     break
@@ -892,7 +911,12 @@ $BootWorker = {
 
                 while ($ServicesCheck.ScriptOutput -like 'WARNING: Access denied*') {
                     try {
-                        CheckTimeout -ErrorAction $ErrorActionPreference
+                        $TimeoutParams = @{
+                            Timeout     = $Configuration.BootTimeout
+                            Action      = 'boot'
+                            ErrorAction = $ErrorActionPreference
+                        }
+                        CheckTimeout @TimeoutParams
                     } catch [System.TimeoutException] {
                         Write-Host $_.Exception.Message -BackgroundColor Magenta -ForegroundColor Cyan
                         break
@@ -1010,8 +1034,12 @@ $InterimWorker = {
 
         # Function to check if $TimeoutCounter has exceeded the timeout value
         function CheckTimeout {
-            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Configuration.BootTimeout) {
-                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Configuration.BootTimeout) " +
+            param (
+                [int]$Timeout,
+                [string]$Action
+            )
+            if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Timeout) {
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Timeout) " +
                 'minutes. Logging.'
                 throw [System.TimeoutException] $msg
             }
@@ -1117,7 +1145,12 @@ $InterimWorker = {
 
                 while (($VM.PowerState -ne 'PoweredOn') -or (![bool]$VM.Guest.HostName)) {
                     try {
-                        CheckTimeout -ErrorAction $ErrorActionPreference
+                        $TimeoutParams = @{
+                            Timeout     = $Configuration.BootTimeout
+                            Action      = 'boot'
+                            ErrorAction = $ErrorActionPreference
+                        }
+                        CheckTimeout @TimeoutParams
                     } catch [System.TimeoutException] {
                         Write-Host $_.Exception.Message -BackgroundColor Magenta -ForegroundColor Cyan
                         break
