@@ -206,9 +206,43 @@ function Invoke-Parallelization {
         }
         Write-Progress @WriteProgressParams
 
+        # If the final boot, ensure all delayed servers have finally shut down
+        if ($WorkerScript -eq $BootWorker) {
+            # Create a HashSet for fast lookup
+            $ShutdownFailureSet = [System.Collections.Generic.HashSet[string]]::new()
+            $Configuration.ShutdownFailure.ForEach({ $ShutdownFailureSet.Add($_) })
+
+            # Find matching VMs
+            $ShutdownFailure = $Servers | Where-Object { $ShutdownFailureSet.Contains($_.Name) }
+
+            # Log the servers in ShutdownFailure and proceed only if there are matches
+            if ($ShutdownFailure) {
+                $ServerNames = $ShutdownFailure | ForEach-Object { $_.Name } -join ', '
+                $msg = "$(Get-Date -Format G): The following servers previously timed out during shutdown: "
+                $msg += "$ServerNames. The script will now check their status and wait for them to complete "
+                $msg += 'shutdown before continuing.'
+                Write-Host $msg
+
+                # Monitor VMs until they are powered off
+                foreach ($VMName in $ShutdownFailure) {
+                    $VM = Get-VM -Name $VMName -Server $Configuration.VIServer
+                    while ($VM.PowerState -ne 'PoweredOff') {
+                        $msg = "$(Get-Date -Format G): Still waiting for $($VM.Name) to shut down."
+                        $msg += " Power state: $($VM.PowerState)."
+                        Write-Host $msg
+                        Start-Sleep -Seconds 30
+
+                        # Refresh the VM object to get the latest PowerState
+                        $VM = Get-VM -Name $VMName -Server $Configuration.VIServer
+                    }
+                }
+            } else {
+                Write-Host "$(Get-Date -Format G): No servers found in the ShutdownFailure list."
+            }
+        }
+
         $VMindex = 1
         # Create job for each VM
-
         foreach ($VM in $Servers) {
             # Save credentials to hashtable for later use if running FirstRebootWorker
             if ($WorkerScript -eq $FirstRebootWorker -or $WorkerScript -eq $TestCredentials) {
@@ -289,6 +323,7 @@ function Invoke-Parallelization {
     end {
         # Clean up runspace.
         $RunspacePool.Close()
+        $RunspacePool.Dispose()
 
         Write-Progress -Activity $WorkerStatus -Completed
     }
@@ -611,8 +646,7 @@ $FirstRebootWorker = {
                 [string]$Action
             )
             if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Timeout) {
-                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Timeout) " +
-                'minutes. Logging.'
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to $Action in $Timeout minutes. Logging."
                 throw [System.TimeoutException] $msg
             }
         }
@@ -692,8 +726,22 @@ $FirstRebootWorker = {
                     $VM = Stop-VM -VM $VM -Server $Configuration.VIServer -Confirm:$false
                 }
                 $Configuration.Shutdown[$VM.Name] = $true
+                $TimeoutCounter = [System.Diagnostics.Stopwatch]::StartNew()
 
                 while ($VM.PowerState -ne 'PoweredOff') {
+                    try {
+                        $TimeoutParams = @{
+                            Timeout     = $Configuration.ShutdownTimeout
+                            Action      = 'shutdown'
+                            ErrorAction = $ErrorActionPreference
+                        }
+                        CheckTimeout @TimeoutParams
+                    } catch [System.TimeoutException] {
+                        Write-Host $_.Exception.Message -BackgroundColor Magenta -ForegroundColor Cyan
+                        $Configuration.ShutdownFailure += $VM.Name
+                        $Error.Clear()
+                        return
+                    }
                     Start-Sleep -Seconds 30
                     $VM = Get-VM -Name $VM -Server $Configuration.VIServer -ErrorAction $ErrorActionPreference
                     $msg = "$(Get-Date -Format G): Waiting for $($VM.Name) to shut down."
@@ -702,6 +750,8 @@ $FirstRebootWorker = {
                     }
                     Write-Host $msg
                 }
+
+                $TimeoutCounter.Stop()
 
                 # Wait an additional 30 seconds to ensure the VM is fully shut down
                 Start-Sleep -Seconds 30
@@ -851,8 +901,7 @@ $BootWorker = {
                 [string]$Action
             )
             if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Timeout) {
-                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Timeout) " +
-                'minutes. Logging.'
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to $Action in $Timeout minutes. Logging."
                 throw [System.TimeoutException] $msg
             }
         }
@@ -1039,8 +1088,7 @@ $InterimWorker = {
                 [string]$Action
             )
             if ($TimeoutCounter.Elapsed.TotalMinutes -gt $Timeout) {
-                $msg = "$(Get-Date -Format G): $($VM.Name) failed to boot in $($Timeout) " +
-                'minutes. Logging.'
+                $msg = "$(Get-Date -Format G): $($VM.Name) failed to $Action in $Timeout minutes. Logging."
                 throw [System.TimeoutException] $msg
             }
         }
@@ -1320,8 +1368,9 @@ foreach ($Stage in $Stages) {
             $Buttons.YesNo + $Icon.Question)
 
     while ($ButtonClicked -eq $Selection.Yes) {
+        $RebootableVMs = $StageServers | Where-Object { $_.Name -notin $Configuration.ShutdownFailure }
         $VMsSelected = Select-MultiOptionDialogBox -Title 'Select VMs to reboot' -Prompt 'Select VMs to reboot' `
-            -Values ($StageTable.Name) -Height 500
+            -Values ($RebootableVMs.Name) -Height 500
 
         if ($null -eq $VMsSelected) {
             $ButtonClicked = $wshell.Popup('Do any servers require another patching reboot?', 0, 'Additional Patches', `
@@ -1352,7 +1401,7 @@ foreach ($Stage in $Stages) {
 
     # Perform final shutdown using InterimWorker in preparation of booting in correct order
     $ShutdownParams = @{
-        Servers                  = $StageServers
+        Servers                  = $RebootableVMs
         RunspaceCreationActivity = "Creating Runspaces for Stage $Stage"
         LMCreds                  = $LMCreds
         ADCreds                  = $ADCreds
@@ -1432,7 +1481,8 @@ foreach ($Stage in $Stages) {
         Write-Host "Finished Boot Group $BootGroup."
     }
 
-    Write-Host "Completed stage $Stage."
+    Write-Host "Completed stage $Stage. Resetting slow shutdown servers variable."
+    $Configuration.ShutdownFailure = @()
 
     # Do not wait after the final stage
     if ($StageIdx -lt $TotalStages) {
