@@ -1367,8 +1367,9 @@ foreach ($Stage in $Stages) {
     $ButtonClicked = $wshell.Popup('Do any servers require another patching reboot?', 0, 'Additional Patches', `
             $Buttons.YesNo + $Icon.Question)
 
+    $RebootableVMs = $StageServers | Where-Object { $_.Name -notin $Configuration.ShutdownFailure }
+
     while ($ButtonClicked -eq $Selection.Yes) {
-        $RebootableVMs = $StageServers | Where-Object { $_.Name -notin $Configuration.ShutdownFailure }
         $VMsSelected = Select-MultiOptionDialogBox -Title 'Select VMs to reboot' -Prompt 'Select VMs to reboot' `
             -Values ($RebootableVMs.Name) -Height 500
 
