@@ -210,14 +210,14 @@ function Invoke-Parallelization {
         if ($WorkerScript -eq $BootWorker) {
             # Create a HashSet for fast lookup
             $ShutdownFailureSet = [System.Collections.Generic.HashSet[string]]::new()
-            $Configuration.ShutdownFailure.ForEach({ $ShutdownFailureSet.Add($_) })
+            $Configuration.ShutdownFailure.ForEach({ [void]$ShutdownFailureSet.Add($_) })
 
             # Find matching VMs
-            $ShutdownFailure = $Servers | Where-Object { $ShutdownFailureSet.Contains($_.Name) }
+            $ShutdownFailure = $Servers | Where-Object { $ShutdownFailureSet.Contains($_.Name) } | ForEach-Object { $_.Name }
 
             # Log the servers in ShutdownFailure and proceed only if there are matches
             if ($ShutdownFailure) {
-                $ServerNames = $ShutdownFailure | ForEach-Object { $_.Name } -join ', '
+                $ServerNames = $ShutdownFailure -join ', '
                 $msg = "$(Get-Date -Format G): The following servers previously timed out during shutdown: "
                 $msg += "$ServerNames. The script will now check their status and wait for them to complete "
                 $msg += 'shutdown before continuing.'
